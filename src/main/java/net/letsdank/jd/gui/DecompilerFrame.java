@@ -34,6 +34,22 @@ public final class DecompilerFrame extends JFrame {
         // Левая панель: дерево классов/пакетов
         DefaultMutableTreeNode root = new DefaultMutableTreeNode("No file");
         tree = new JTree(new DefaultTreeModel(root));
+        tree.addTreeSelectionListener(e -> {
+            Object node = tree.getLastSelectedPathComponent();
+            if (node == null) return;
+
+            if (node instanceof MethodTreeNode mNode) {
+                // Показать код конкретного метода
+                showMethodDisassembly(mNode.classFile(), mNode.method());
+            } else if (node instanceof DefaultMutableTreeNode dtmn) {
+                // Для других узлов покажем общую информацию по классу,
+                // если в корне лежит ClassFile
+                Object rootObj = ((DefaultMutableTreeNode) tree.getModel().getRoot()).getUserObject();
+                if (rootObj instanceof ClassFile cf) {
+                    showClassSummary(cf);
+                }
+            }
+        });
         JScrollPane treeScroll = new JScrollPane(tree);
 
         // Правая панель: текст (будущий Java-код)
@@ -88,7 +104,19 @@ public final class DecompilerFrame extends JFrame {
 
     private void showClassFile(File file, ClassFile cf) {
         // Обновим дерево
-        DefaultMutableTreeNode root = new DefaultMutableTreeNode(file.getName());
+        // Корень дерева будет содержать сам ClassFile как userObject,
+        // а имя файла - в toString()
+        DefaultMutableTreeNode root = new DefaultMutableTreeNode(file.getName()) {
+            @Override
+            public Object getUserObject() {
+                return cf; // внутри держим ClassFile
+            }
+
+            @Override
+            public String toString() {
+                return file.getName();
+            }
+        };
         DefaultMutableTreeNode classNode = new DefaultMutableTreeNode(cf.thisClassFqn());
         root.add(classNode);
 
@@ -99,10 +127,65 @@ public final class DecompilerFrame extends JFrame {
         classNode.add(fieldsNode);
         classNode.add(methodsNode);
 
+        // Добавляем каждый метод отдельным узлом
+        for (var m : cf.methods()) {
+            MethodTreeNode mNode = new MethodTreeNode(cf, m);
+            methodsNode.add(mNode);
+        }
+
         ((DefaultTreeModel) tree.getModel()).setRoot(root);
         expandAll(tree);
 
-        // Обновим правую панель: информация о классе + дизассемблер
+        // По умолчанию показываем сводку по классу
+        showClassSummary(cf);
+    }
+
+    private void showMethodDisassembly(ClassFile cf, MethodInfo method) {
+        StringBuilder sb = new StringBuilder();
+
+        ConstantPool cp = cf.constantPool();
+        String className = cf.thisClassFqn();
+        String methodName = cp.getUtf8(method.nameIndex());
+        String desc = cp.getUtf8(method.descriptorIndex());
+
+        sb.append("Class: ").append(className).append('\n');
+        sb.append("Method: ").append(methodName).append(desc).append('\n');
+        sb.append('\n');
+
+        CodeAttribute codeAttr = method.findCodeAttribute();
+        if (codeAttr == null) {
+            sb.append("  <no code>\n");
+            textArea.setText(sb.toString());
+            textArea.setCaretPosition(0);
+            return;
+        }
+
+        byte[] code = codeAttr.code();
+        BytecodeDecoder decoder = new BytecodeDecoder();
+        List<Insn> insns = decoder.decode(code);
+
+        sb.append("Bytecode:\n\n");
+        for (Insn insn : insns) {
+            if (insn instanceof SimpleInsn s) {
+                sb.append(String.format("  %4d: %s\n", s.offset(), s.opcode().mnemonic()));
+            } else if (insn instanceof LocalVarInsn lv) {
+                sb.append(String.format("  %4d: %s %d%n", lv.offset(), lv.opcode().mnemonic(), lv.localIndex()));
+            } else if (insn instanceof IntOperandInsn io) {
+                sb.append(String.format("  %4d: %s %d%n", io.offset(), io.opcode().mnemonic(), io.operand()));
+            } else if (insn instanceof JumpInsn j) {
+                sb.append(String.format("  %4d: %s %d  ; target=%d%n",
+                        j.offset(), j.opcode().mnemonic(), j.rawOffsetDelta(), j.targetOffset()));
+            } else if (insn instanceof UnknownInsn u) {
+                sb.append(String.format("  %4d: <unknown opcode 0x%02X, %d bytes remaining>\n",
+                        u.offset(), u.opcodeByte(), u.remainingBytes().length));
+            }
+        }
+
+        textArea.setText(sb.toString());
+        textArea.setCaretPosition(0);
+    }
+
+    private void showClassSummary(ClassFile cf) {
         StringBuilder sb = new StringBuilder();
         sb.append("Class: ").append(cf.thisClassFqn()).append('\n');
         sb.append("Super: ").append(cf.superClassIndex()).append('\n');
@@ -111,48 +194,10 @@ public final class DecompilerFrame extends JFrame {
         sb.append("Fields: ").append(cf.fields().length).append('\n');
         sb.append("Methods: ").append(cf.methods().length).append('\n');
 
-        sb.append("=== Bytecode (experimental) ===\n\n");
-        appendMethodsDisassembly(sb, cf);
+        sb.append("Select a method in the tree to see its bytecode.\n\n");
 
         textArea.setText(sb.toString());
         textArea.setCaretPosition(0);
-    }
-
-    private void appendMethodsDisassembly(StringBuilder sb, ClassFile cf) {
-        ConstantPool cp = cf.constantPool();
-        BytecodeDecoder decoder = new BytecodeDecoder();
-
-        for (MethodInfo m : cf.methods()) {
-            String name = cp.getUtf8(m.nameIndex());
-            String desc = cp.getUtf8(m.descriptorIndex());
-            sb.append("Method: ").append(name).append(desc).append('\n');
-
-            CodeAttribute codeAttr = m.findCodeAttribute();
-            if (codeAttr == null) {
-                sb.append("  <no code>\n\n");
-                continue;
-            }
-
-            byte[] code = codeAttr.code();
-            List<Insn> insns = decoder.decode(code);
-
-            for (Insn insn : insns) {
-                if (insn instanceof SimpleInsn s) {
-                    sb.append(String.format("  %4d: %s\n", s.offset(), s.opcode().mnemonic()));
-                } else if (insn instanceof LocalVarInsn lv) {
-                    sb.append(String.format("  %4d: %s %d%n", lv.offset(), lv.opcode().mnemonic(), lv.localIndex()));
-                } else if (insn instanceof IntOperandInsn io) {
-                    sb.append(String.format("  %4d: %s %d%n", io.offset(), io.opcode().mnemonic(), io.operand()));
-                } else if (insn instanceof JumpInsn j) {
-                    sb.append(String.format("  %4d: %s %d  ; target=%d%n",
-                            j.offset(), j.opcode().mnemonic(), j.rawOffsetDelta(), j.targetOffset()));
-                } else if (insn instanceof UnknownInsn u) {
-                    sb.append(String.format("  %4d: <unknown opcode 0x%02X, %d bytes remaining>\n",
-                            u.offset(), u.opcodeByte(), u.remainingBytes().length));
-                }
-            }
-            sb.append('\n');
-        }
     }
 
     private static void expandAll(JTree tree) {
