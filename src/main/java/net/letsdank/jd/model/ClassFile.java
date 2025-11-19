@@ -3,8 +3,9 @@ package net.letsdank.jd.model;
 /**
  * Минимальное представление class-файла.
  */
-public record ClassFile(int minorVersion, int majorVersion, ConstantPool constantPool, int accessFlags,
-                        int thisClassIndex, int superClassIndex, int[] interfaceIndices) {
+public record ClassFile(int minorVersion, int majorVersion, ConstantPool constantPool,
+                        int accessFlags, int thisClassIndex, int superClassIndex, int[] interfaceIndices,
+                        FieldInfo[] fields, MethodInfo[] methods) {
     /**
      * Имя класса в виде "com/example/Foo" из constant pool
      */

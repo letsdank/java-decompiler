@@ -1,6 +1,7 @@
 package net.letsdank.jd.io;
 
 import net.letsdank.jd.model.*;
+import net.letsdank.jd.model.cp.*;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -32,7 +33,26 @@ public final class ClassFileReader {
                 interfaces[i] = in.readU2();
             }
 
-            return new ClassFile(minor, major, cp, accessFlags, thisClassIndex, superClassIndex, interfaces);
+            FieldInfo[] fields = readFields(in, cp);
+            MethodInfo[] methods = readMethods(in, cp);
+
+            // Атрибуты класса пока проигнорируем (прочитаем и выкинем)
+            int attributesCount = in.readU2();
+            for (int i = 0; i < attributesCount; i++) {
+                readSingleAttribute(in, cp); // пока не сохраняем
+            }
+
+            return new ClassFile(
+                    minor,
+                    major,
+                    cp,
+                    accessFlags,
+                    thisClassIndex,
+                    superClassIndex,
+                    interfaces,
+                    fields,
+                    methods
+            );
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -149,10 +169,87 @@ public final class ClassFileReader {
                 default -> throw new IOException("Unknown constant pool tag: " + tag +
                         " at index " + i);
             }
-            entries[i]=entry;
+            entries[i] = entry;
             i++;
         }
 
         return new ConstantPool(entries);
+    }
+
+    private FieldInfo[] readFields(ClassFileInput in, ConstantPool cp) throws IOException {
+        int count = in.readU2();
+        FieldInfo[] result = new FieldInfo[count];
+        for (int i = 0; i < count; i++) {
+            int accessFlags = in.readU2();
+            int nameIndex = in.readU2();
+            int descriptorIndex = in.readU2();
+            AttributeInfo[] attrs = readAttributes(in, cp);
+            result[i] = new FieldInfo(accessFlags, nameIndex, descriptorIndex, attrs);
+        }
+        return result;
+    }
+
+    private MethodInfo[] readMethods(ClassFileInput in, ConstantPool cp) throws IOException {
+        int count = in.readU2();
+        MethodInfo[] result = new MethodInfo[count];
+        for (int i = 0; i < count; i++) {
+            int accessFlags = in.readU2();
+            int nameIndex = in.readU2();
+            int descriptorIndex = in.readU2();
+            AttributeInfo[] attrs = readAttributes(in, cp);
+            result[i] = new MethodInfo(accessFlags, nameIndex, descriptorIndex, attrs);
+        }
+        return result;
+    }
+
+    private AttributeInfo[] readAttributes(ClassFileInput in, ConstantPool cp) throws IOException {
+        int count = in.readU2();
+        AttributeInfo[] attrs = new AttributeInfo[count];
+        for (int i = 0; i < count; i++) {
+            attrs[i] = readSingleAttribute(in, cp);
+        }
+        return attrs;
+    }
+
+    private AttributeInfo readSingleAttribute(ClassFileInput in, ConstantPool cp) throws IOException {
+        int nameIndex = in.readU2();
+        long length = in.readU4();
+        String name = cp.getUtf8(nameIndex);
+
+        if ("Code".equals(name)) {
+            int maxStack = in.readU2();
+            int maxLocals = in.readU2();
+            long codeLength = in.readU4();
+            byte[] code = new byte[(int) codeLength];
+            for (int i = 0; i < codeLength; i++) {
+                code[i] = (byte) in.readU1();
+            }
+
+            // exception_table
+            int exceptionTableLength = in.readU2();
+            // просто пролистываем
+            for (int i = 0; i < exceptionTableLength; i++) {
+                in.readU2(); // start_pc
+                in.readU2(); // end_pc
+                in.readU2(); // handler_pc
+                in.readU2(); // catch_type
+            }
+
+            // attributes внутри Code
+            int codeAttrsCount = in.readU2();
+            for (int i = 0; i < codeAttrsCount; i++) {
+                // пока просто читаем и выбрасываем
+                readSingleAttribute(in, cp);
+            }
+
+            return new CodeAttribute(name, maxStack, maxLocals, code);
+        } else {
+            // Пропускаем тело атрибута
+            byte[] data = new byte[(int) length];
+            for (int i = 0; i < length; i++) {
+                data[i] = (byte) in.readU1();
+            }
+            return new RawAttribute(name, data);
+        }
     }
 }

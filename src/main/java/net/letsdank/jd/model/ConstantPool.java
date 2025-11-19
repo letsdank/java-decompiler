@@ -1,5 +1,9 @@
 package net.letsdank.jd.model;
 
+import net.letsdank.jd.model.cp.CpClass;
+import net.letsdank.jd.model.cp.CpInfo;
+import net.letsdank.jd.model.cp.CpUtf8;
+
 /**
  * Обертка над массивом constant pool.
  * Индексация 1..count-1 (элемент 0 не используется).

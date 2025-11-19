@@ -1,11 +1,14 @@
 package net.letsdank.jd.io;
 
 import net.letsdank.jd.model.ClassFile;
+import net.letsdank.jd.model.CodeAttribute;
 import net.letsdank.jd.model.ConstantPool;
+import net.letsdank.jd.model.MethodInfo;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -14,8 +17,7 @@ class ClassFileReaderTest {
     @Test
     void canReadOwnClassFile() throws IOException {
         // Берем .class этого же теста
-        InputStream in = ClassFileReaderTest.class
-                .getResourceAsStream("ClassFileReaderTest.class");
+        InputStream in = ClassFileReaderTest.class.getResourceAsStream("ClassFileReaderTest.class");
         assertNotNull(in, "Failed to load own .class as resource");
 
         ClassFileReader reader = new ClassFileReader();
@@ -36,5 +38,29 @@ class ClassFileReaderTest {
         // В пуле должен быть internal-name вида net/letsdank/jd/io/ClassFileReaderTest
         String internal = fqn.replace('.', '/');
         assertTrue(cp.containsUtf8(internal), "Constant pool must contain Utf8 for internal name: " + internal);
+    }
+
+    @Test
+    void hasMethodWithCodeAttribute() throws IOException {
+        InputStream in = ClassFileReaderTest.class.getResourceAsStream("ClassFileReaderTest.class");
+        assertNotNull(in, "Failed to load own .class as resource");
+
+        ClassFileReader reader = new ClassFileReader();
+        ClassFile cf = reader.read(in);
+
+        ConstantPool cp = cf.constantPool();
+        MethodInfo[] methods = cf.methods();
+        assertTrue(methods.length > 0, "Class must have methods");
+
+        // Ищем метод "hasMethodWithCodeAttribute"
+        MethodInfo target = Arrays.stream(methods)
+                .filter(m -> "hasMethodWithCodeAttribute".equals(cp.getUtf8(m.nameIndex())))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Method not found"));
+
+        CodeAttribute code = target.findCodeAttribute();
+        assertNotNull(code, "Method must have Code attribute");
+        assertTrue(code.code().length > 0, "Bytecode length must be > 0");
+        assertTrue(code.maxStack() > 0, "maxStack should be > 0");
     }
 }
