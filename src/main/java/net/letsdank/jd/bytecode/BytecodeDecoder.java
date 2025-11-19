@@ -72,13 +72,25 @@ public final class BytecodeDecoder {
                     int target = offset + delta; // offset уже указывает на следующую инструкцию
                     insns.add(new JumpInsn(start, opcode, target, delta));
                 }
-                case CONSTPOOL_U1, CONSTPOOL_U2 -> {
-                    // Пока не используем, можно добавить отдельный тип Insn,
-                    // но для первых шагов это не критично.
-                    // Оставим Unknown, чтобы не "маскировать" такие инструкции.
-                    byte[] remaining = Arrays.copyOfRange(code, start, code.length);
-                    insns.add(new UnknownInsn(start, opByte, remaining));
-                    return insns;
+                case CONSTPOOL_U1 -> {
+                    if (offset >= code.length) {
+                        insns.add(new UnknownInsn(start, opByte, Arrays.copyOfRange(code, start, code.length)));
+                        return insns;
+                    }
+                    int cpIndex = code[offset] & 0xFF;
+                    offset++;
+                    insns.add(new ConstantPoolInsn(start, opcode, cpIndex));
+                }
+                case CONSTPOOL_U2 -> {
+                    if (offset + 1 >= code.length) {
+                        insns.add(new UnknownInsn(start, opByte, Arrays.copyOfRange(code, start, code.length)));
+                        return insns;
+                    }
+                    int hi = code[offset] & 0xFF;
+                    int lo = code[offset + 1] & 0xFF;
+                    offset += 2;
+                    int cpIndex = (hi << 8) | lo;
+                    insns.add(new ConstantPoolInsn(start, opcode, cpIndex));
                 }
             }
         }

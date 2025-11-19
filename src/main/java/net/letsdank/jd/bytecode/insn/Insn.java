@@ -5,6 +5,6 @@ package net.letsdank.jd.bytecode.insn;
  */
 public sealed interface Insn
         permits SimpleInsn, LocalVarInsn, IntOperandInsn,
-        JumpInsn, UnknownInsn {
+        JumpInsn, ConstantPoolInsn, UnknownInsn {
     int offset();
 }

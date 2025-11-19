@@ -29,6 +29,9 @@ public enum Opcode {
     BIPUSH(0x10, "bipush", OperandType.BYTE_IMM),
     SIPUSH(0x11, "sipush", OperandType.SHORT_IMM),
 
+    // ldc index (u1)
+    LDC(0x12,"ldc",OperandType.CONSTPOOL_U1),
+
     IADD(0x60, "iadd"),
     INEG(0x74, "ineg"),
 
@@ -49,6 +52,16 @@ public enum Opcode {
 
     // --- безусловные ---
     GOTO(0xA7, "goto", OperandType.BRANCH_S2),
+
+    // --- поля/методы (cp_index u2) ---
+    GETSTATIC(0xB2,"getstatic",OperandType.CONSTPOOL_U2),
+    PUTSTATIC(0xB3,"putstatic",OperandType.CONSTPOOL_U2),
+    GETFIELD(0xB4,"getfield",OperandType.CONSTPOOL_U2),
+    PUTFIELD(0xB5,"putfield",OperandType.CONSTPOOL_U2),
+
+    INVOKEVIRTUAL(0xB6,"invokevirtual",OperandType.CONSTPOOL_U2),
+    INVOKESPECIAL(0xB7,"invokespecial",OperandType.CONSTPOOL_U2),
+    INVOKESTATIC(0xB8,"invokestatic",OperandType.CONSTPOOL_U2),
 
     // --- возвраты ---
     IRETURN(0xAC, "ireturn"),

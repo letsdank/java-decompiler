@@ -7,6 +7,7 @@ import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.CodeAttribute;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
+import net.letsdank.jd.model.cp.*;
 
 import javax.swing.*;
 import javax.swing.tree.DefaultMutableTreeNode;
@@ -175,6 +176,10 @@ public final class DecompilerFrame extends JFrame {
             } else if (insn instanceof JumpInsn j) {
                 sb.append(String.format("  %4d: %s %d  ; target=%d%n",
                         j.offset(), j.opcode().mnemonic(), j.rawOffsetDelta(), j.targetOffset()));
+            } else if (insn instanceof ConstantPoolInsn cpi) {
+                int cpIndex = cpi.cpIndex();
+                String cpText = formatCpEntry(cp, cpIndex);
+                sb.append(String.format("  %4d: %s #%d    ; %s%n", cpi.offset(), cpi.opcode().mnemonic(), cpIndex, cpText));
             } else if (insn instanceof UnknownInsn u) {
                 sb.append(String.format("  %4d: <unknown opcode 0x%02X, %d bytes remaining>\n",
                         u.offset(), u.opcodeByte(), u.remainingBytes().length));
@@ -198,6 +203,46 @@ public final class DecompilerFrame extends JFrame {
 
         textArea.setText(sb.toString());
         textArea.setCaretPosition(0);
+    }
+
+    private String formatCpEntry(ConstantPool cp, int index) {
+        if (index <= 0 || index >= cp.size()) {
+            return "#" + index;
+        }
+
+        CpInfo e = cp.entry(index);
+        if (e instanceof CpClass cls) {
+            String name = cp.getUtf8(cls.nameIndex());
+            return name;
+        }
+        if (e instanceof CpString s) {
+            String value = cp.getUtf8(s.stringIndex());
+            return "\"" + value + "\"";
+        }
+        if (e instanceof CpFieldref fr) {
+            String owner = cp.getClassName(fr.classIndex());
+            CpNameAndType nt = (CpNameAndType) cp.entry(fr.nameAndTypeIndex());
+            String name = cp.getUtf8(nt.nameIndex());
+            String desc = cp.getUtf8(nt.descriptorIndex());
+            return owner + "." + name + ":" + desc;
+        }
+        if (e instanceof CpMethodref mr) {
+            String owner = cp.getClassName(mr.classIndex());
+            CpNameAndType nt = (CpNameAndType) cp.entry(mr.nameAndTypeIndex());
+            String name = cp.getUtf8(nt.nameIndex());
+            String desc = cp.getUtf8(nt.descriptorIndex());
+            return owner + "." + name + desc;
+        }
+        if (e instanceof CpInterfaceMethodref imr) {
+            String owner = cp.getClassName(imr.classIndex());
+            CpNameAndType nt = (CpNameAndType) cp.entry(imr.nameAndTypeIndex());
+            String name = cp.getUtf8(nt.nameIndex());
+            String desc = cp.getUtf8(nt.descriptorIndex());
+            return owner + "." + name + desc;
+        }
+
+        // fallback
+        return "#" + index + " (" + e.getClass().getSimpleName() + ")";
     }
 
     private static void expandAll(JTree tree) {

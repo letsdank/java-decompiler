@@ -16,4 +16,8 @@ public class SimpleMethods {
             return -x;
         }
     }
+
+    public void printHello(){
+        System.out.println("Hello");
+    }
 }
