@@ -3,28 +3,32 @@ package net.letsdank.jd.model;
 /**
  * Минимальное представление class-файла.
  */
-public final class ClassFile {
-    private final int minorVersion;
-    private final int majorVersion;
-
-    public ClassFile(int minorVersion, int majorVersion) {
-        this.minorVersion = minorVersion;
-        this.majorVersion = majorVersion;
+public record ClassFile(int minorVersion, int majorVersion, ConstantPool constantPool, int accessFlags,
+                        int thisClassIndex, int superClassIndex, int[] interfaceIndices) {
+    /**
+     * Имя класса в виде "com/example/Foo" из constant pool
+     */
+    public String thisClassInternalName() {
+        return constantPool.getClassName(thisClassIndex);
     }
 
-    public int minorVersion() {
-        return minorVersion;
+    /**
+     * Имя класса в виде "com.example.Foo".
+     */
+    public String thisClassFqn() {
+        return thisClassInternalName().replace('/', '.');
     }
 
-    public int majorVersion() {
-        return majorVersion;
+    public String superClassInternalName() {
+        if (superClassIndex == 0) {
+            // Для java/lang/Object super_class = 0
+            return null;
+        }
+        return constantPool.getClassName(superClassIndex);
     }
 
-    @Override
-    public String toString() {
-        return "ClassFile{" +
-                "minorVersion=" + minorVersion +
-                ", majorVersion=" + majorVersion +
-                '}';
+    public String superClassFqn() {
+        String internal = superClassInternalName();
+        return internal == null ? null : internal.replace('/', '.');
     }
 }
