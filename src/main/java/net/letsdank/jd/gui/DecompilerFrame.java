@@ -1,7 +1,14 @@
 package net.letsdank.jd.gui;
 
+import net.letsdank.jd.bytecode.BytecodeDecoder;
+import net.letsdank.jd.bytecode.Insn;
+import net.letsdank.jd.bytecode.SimpleInsn;
+import net.letsdank.jd.bytecode.UnknownInsn;
 import net.letsdank.jd.io.ClassFileReader;
 import net.letsdank.jd.model.ClassFile;
+import net.letsdank.jd.model.CodeAttribute;
+import net.letsdank.jd.model.ConstantPool;
+import net.letsdank.jd.model.MethodInfo;
 
 import javax.swing.*;
 import javax.swing.tree.DefaultMutableTreeNode;
@@ -10,6 +17,7 @@ import java.awt.*;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.util.List;
 
 /**
  * Простейшее GUI: слева дерево, справа панель с текстом
@@ -96,7 +104,7 @@ public final class DecompilerFrame extends JFrame {
         ((DefaultTreeModel) tree.getModel()).setRoot(root);
         expandAll(tree);
 
-        // Обновим правую панель: пока просто информация о классе
+        // Обновим правую панель: информация о классе + дизассемблер
         StringBuilder sb = new StringBuilder();
         sb.append("Class: ").append(cf.thisClassFqn()).append('\n');
         sb.append("Super: ").append(cf.superClassIndex()).append('\n');
@@ -105,8 +113,41 @@ public final class DecompilerFrame extends JFrame {
         sb.append("Fields: ").append(cf.fields().length).append('\n');
         sb.append("Methods: ").append(cf.methods().length).append('\n');
 
+        sb.append("=== Bytecode (experimental) ===\n\n");
+        appendMethodsDisassembly(sb, cf);
+
         textArea.setText(sb.toString());
         textArea.setCaretPosition(0);
+    }
+
+    private void appendMethodsDisassembly(StringBuilder sb, ClassFile cf) {
+        ConstantPool cp = cf.constantPool();
+        BytecodeDecoder decoder = new BytecodeDecoder();
+
+        for (MethodInfo m : cf.methods()) {
+            String name = cp.getUtf8(m.nameIndex());
+            String desc = cp.getUtf8(m.descriptorIndex());
+            sb.append("Method: ").append(name).append(desc).append('\n');
+
+            CodeAttribute codeAttr = m.findCodeAttribute();
+            if (codeAttr == null) {
+                sb.append("  <no code>\n\n");
+                continue;
+            }
+
+            byte[] code = codeAttr.code();
+            List<Insn> insns = decoder.decode(code);
+
+            for (Insn insn : insns) {
+                if (insn instanceof SimpleInsn s) {
+                    sb.append(String.format("  %4d: %s\n", s.offset(), s.opcode().mnemonic()));
+                } else if (insn instanceof UnknownInsn u) {
+                    sb.append(String.format("  %4d: <unknown opcode 0x%02X, %d bytes remaining>\n",
+                            u.offset(), u.opcodeByte(), u.remainingBytes().length));
+                }
+            }
+            sb.append('\n');
+        }
     }
 
     private static void expandAll(JTree tree) {
