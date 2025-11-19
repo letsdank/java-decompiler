@@ -1,5 +1,8 @@
 package net.letsdank.jd.bytecode;
 
+import net.letsdank.jd.bytecode.insn.Insn;
+import net.letsdank.jd.bytecode.insn.SimpleInsn;
+import net.letsdank.jd.bytecode.insn.UnknownInsn;
 import net.letsdank.jd.fixtures.SimpleMethods;
 import net.letsdank.jd.io.ClassFileReader;
 import net.letsdank.jd.model.ClassFile;

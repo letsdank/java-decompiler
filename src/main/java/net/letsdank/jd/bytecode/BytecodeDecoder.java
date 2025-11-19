@@ -1,13 +1,13 @@
 package net.letsdank.jd.bytecode;
 
+import net.letsdank.jd.bytecode.insn.*;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
 /**
  * Примитивный декодер байткода.
- * Сейчас поддерживает только инструкции без операндов,
- * и только те опкоды, которые есть в enum Opcode.
  */
 public final class BytecodeDecoder {
     public List<Insn> decode(byte[] code) {
@@ -24,9 +24,63 @@ public final class BytecodeDecoder {
                 break;
             }
 
-            // Пока все поддерживаемые считаем без операндов (длина - 1)
-            insns.add(new SimpleInsn(offset, opcode));
-            offset += 1;
+            int start = offset;
+            offset++; // ушли за опкод
+
+            switch (opcode.operandType()) {
+                case NONE -> {
+                    insns.add(new SimpleInsn(offset, opcode));
+                }
+                case LOCAL_INDEX_U1 -> {
+                    if (offset >= code.length) {
+                        insns.add(new UnknownInsn(start, opByte, Arrays.copyOfRange(code, start, code.length)));
+                        return insns;
+                    }
+                    int index = code[offset] & 0xFF;
+                    offset++;
+                    insns.add(new LocalVarInsn(start, opcode, index));
+                }
+                case BYTE_IMM -> {
+                    if (offset >= code.length) {
+                        insns.add(new UnknownInsn(start, opByte, Arrays.copyOfRange(code, start, code.length)));
+                        return insns;
+                    }
+                    int imm = (byte) code[offset]; // signed
+                    offset++;
+                    insns.add(new IntOperandInsn(start, opcode, imm));
+                }
+                case SHORT_IMM -> {
+                    if (offset + 1 >= code.length) {
+                        insns.add(new UnknownInsn(start, opByte, Arrays.copyOfRange(code, start, code.length)));
+                        return insns;
+                    }
+                    int hi = code[offset] & 0xFF;
+                    int lo = code[offset + 1] & 0xFF;
+                    offset += 2;
+                    int imm = (short) ((hi << 8) | lo); // signed
+                    insns.add(new IntOperandInsn(start, opcode, imm));
+                }
+                case BRANCH_S2 -> {
+                    if (offset + 1 >= code.length) {
+                        insns.add(new UnknownInsn(start, opByte, Arrays.copyOfRange(code, start, code.length)));
+                        return insns;
+                    }
+                    int hi = code[offset] & 0xFF;
+                    int lo = code[offset + 1] & 0xFF;
+                    offset += 2;
+                    int delta = (short) ((hi << 8) | lo); // signed offset
+                    int target = offset + delta; // offset уже указывает на следующую инструкцию
+                    insns.add(new JumpInsn(start, opcode, target, delta));
+                }
+                case CONSTPOOL_U1, CONSTPOOL_U2 -> {
+                    // Пока не используем, можно добавить отдельный тип Insn,
+                    // но для первых шагов это не критично.
+                    // Оставим Unknown, чтобы не "маскировать" такие инструкции.
+                    byte[] remaining = Arrays.copyOfRange(code, start, code.length);
+                    insns.add(new UnknownInsn(start, opByte, remaining));
+                    return insns;
+                }
+            }
         }
 
         return insns;

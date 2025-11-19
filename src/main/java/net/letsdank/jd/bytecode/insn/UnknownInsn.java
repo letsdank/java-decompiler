@@ -1,4 +1,4 @@
-package net.letsdank.jd.bytecode;
+package net.letsdank.jd.bytecode.insn;
 
 /**
  * Инструкция, которую мы не умеем декодировать.

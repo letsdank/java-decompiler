@@ -1,9 +1,7 @@
 package net.letsdank.jd.gui;
 
 import net.letsdank.jd.bytecode.BytecodeDecoder;
-import net.letsdank.jd.bytecode.Insn;
-import net.letsdank.jd.bytecode.SimpleInsn;
-import net.letsdank.jd.bytecode.UnknownInsn;
+import net.letsdank.jd.bytecode.insn.*;
 import net.letsdank.jd.io.ClassFileReader;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.CodeAttribute;
@@ -141,6 +139,13 @@ public final class DecompilerFrame extends JFrame {
             for (Insn insn : insns) {
                 if (insn instanceof SimpleInsn s) {
                     sb.append(String.format("  %4d: %s\n", s.offset(), s.opcode().mnemonic()));
+                } else if (insn instanceof LocalVarInsn lv) {
+                    sb.append(String.format("  %4d: %s %d%n", lv.offset(), lv.opcode().mnemonic(), lv.localIndex()));
+                } else if (insn instanceof IntOperandInsn io) {
+                    sb.append(String.format("  %4d: %s %d%n", io.offset(), io.opcode().mnemonic(), io.operand()));
+                } else if (insn instanceof JumpInsn j) {
+                    sb.append(String.format("  %4d: %s %d  ; target=%d%n",
+                            j.offset(), j.opcode().mnemonic(), j.rawOffsetDelta(), j.targetOffset()));
                 } else if (insn instanceof UnknownInsn u) {
                     sb.append(String.format("  %4d: <unknown opcode 0x%02X, %d bytes remaining>\n",
                             u.offset(), u.opcodeByte(), u.remainingBytes().length));

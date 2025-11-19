@@ -1,4 +1,6 @@
-package net.letsdank.jd.bytecode;
+package net.letsdank.jd.bytecode.insn;
+
+import net.letsdank.jd.bytecode.Opcode;
 
 /**
  * Простая инструкция без операндов (пока).
