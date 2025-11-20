@@ -15,6 +15,7 @@ import net.letsdank.jd.cfg.CfgBuilder;
 import net.letsdank.jd.cfg.ControlFlowGraph;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.CodeAttribute;
+import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
 import net.letsdank.jd.utils.JDUtils;
 
@@ -40,12 +41,12 @@ public final class MethodDecompiler {
 
         // 1. Строим CFG и пытаемся найти условный переход + условие
         ControlFlowGraph cfg = cfgBuilder.build(code);
-        Expr condition = findConditionExpr(cfg, localNames);
+        Expr condition = findConditionExpr(cfg, localNames, cp);
 
         // 2. Строим линейный AST по всему байткоду
         BytecodeDecoder decoder = new BytecodeDecoder();
         List<Insn> insns = decoder.decode(code);
-        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames);
+        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp);
         BlockStmt linearBody = exprBuilder.buildBlock(insns);
 
         // 3. Если есть условие и два простых return подряд - собираем if/else
@@ -66,7 +67,7 @@ public final class MethodDecompiler {
      * Ищем первый блок, который заканчивается условным JumpInsn,
      * и строим Expr для условия.
      */
-    private Expr findConditionExpr(ControlFlowGraph cfg, LocalNameProvider localName) {
+    private Expr findConditionExpr(ControlFlowGraph cfg, LocalNameProvider localNames, ConstantPool cp) {
         List<BasicBlock> blocks = cfg.blocks();
         if (blocks.isEmpty()) return null;
 
@@ -86,7 +87,7 @@ public final class MethodDecompiler {
         if (condBlock == null || condJump == null) return null;
 
         // Стек до перехода
-        ExpressionBuilder exprBuilder = new ExpressionBuilder(localName);
+        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp);
         var condInsns = condBlock.instructions();
         Deque<Expr> stackBefore = exprBuilder.simulateStackBeforeBranch(condInsns);
 

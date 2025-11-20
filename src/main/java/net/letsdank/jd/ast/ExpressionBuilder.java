@@ -3,10 +3,14 @@ package net.letsdank.jd.ast;
 import net.letsdank.jd.ast.expr.*;
 import net.letsdank.jd.ast.stmt.AssignStmt;
 import net.letsdank.jd.ast.stmt.BlockStmt;
+import net.letsdank.jd.ast.stmt.ExprStmt;
 import net.letsdank.jd.ast.stmt.ReturnStmt;
 import net.letsdank.jd.bytecode.insn.*;
+import net.letsdank.jd.model.ConstantPool;
+import net.letsdank.jd.model.cp.*;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 
@@ -16,9 +20,11 @@ import java.util.List;
  */
 public final class ExpressionBuilder {
     private final LocalNameProvider localNames;
+    private final ConstantPool cp;
 
-    public ExpressionBuilder(LocalNameProvider localNames) {
+    public ExpressionBuilder(LocalNameProvider localNames, ConstantPool cp) {
         this.localNames = localNames;
+        this.cp = cp;
     }
 
     /**
@@ -117,8 +123,63 @@ public final class ExpressionBuilder {
                 // предположим, что block для ExpressionBuilder не включает
                 // финальный JumpInsn (кроме специального случая cond-блока),
                 // поэтому тут можно проигнорировать
-            } else if (insn instanceof ConstantPoolInsn) {
-                // вызовы методов, getstatic и т.п. пока не превращаем в Expr
+            } else if (insn instanceof ConstantPoolInsn cpi) {
+                // Если нет cp (теоретически), просто игнорируем
+                if (cp == null) continue;
+
+                switch (cpi.opcode()) {
+                    case LDC -> {
+                        // ldc #idx -> константа из constant pool
+                        CpInfo e = cp.entry(cpi.cpIndex());
+                        if(e instanceof CpString s){
+                            String text = cp.getUtf8(s.stringIndex());
+                            stack.push(new StringLiteralExpr(text));
+                        }
+                    }
+                    case GETSTATIC -> {
+                        Expr fieldExpr = makeStaticFieldExpr(cpi.cpIndex());
+                        if (fieldExpr != null) {
+                            stack.push(fieldExpr);
+                        }
+                    }
+                    case INVOKEVIRTUAL -> {
+                        // 1. Определяем количество аргументов и void/non-void
+                        String descriptor = resolveMethodDescriptor(cpi.cpIndex());
+                        int argCount = argCountFromDescriptor(descriptor);
+                        boolean isVoid = descriptor!=null&&descriptor.endsWith(")V");
+
+                        int needed = argCount+1; // объект + аргументы
+                        if(stack.size()<needed){
+                            // не хватает на стеке - лучше пропустить, чем падать
+                            break;
+                        }
+
+                        // 2. Снимаем аргументы (в обратном порядке) и target
+                        List<Expr> args = new ArrayList<>(argCount);
+                        for(int i = 0;i<argCount;i++){
+                            // Последний снятый аргумент - правый, поэтому добавляем в начало
+                            args.add(0,stack.pop());
+                        }
+                        Expr target = stack.pop();
+
+                        String methodName = resolveMethodName(cpi.cpIndex());
+                        CallExpr call = new CallExpr(target,methodName,args);
+
+                        if(isVoid){
+                            // println(...) и прочие void -> statement
+                            block.add(new ExprStmt(call));
+                        } else {
+                            // результат используется дальше -> оставим в стеке
+                            stack.push(call);
+                        }
+                    }
+                    case INVOKESTATIC -> {
+                        // Тут можно в дальнейшем поддерживать статические вызовы вида Foo.bar(x)
+                    }
+                    default -> {
+                        // остальные инструкции с cp пока игнорируем
+                    }
+                }
             } else if (insn instanceof UnknownInsn) {
                 // ничего
             }
@@ -192,5 +253,63 @@ public final class ExpressionBuilder {
         }
 
         return stack;
+    }
+
+    private String resolveMethodDescriptor(int cpIndex){
+        if(cp==null)return null;
+        CpInfo e = cp.entry(cpIndex);
+        if(e instanceof CpMethodref mr){
+            CpNameAndType nt=(CpNameAndType) cp.entry(mr.nameAndTypeIndex());
+            return cp.getUtf8(nt.descriptorIndex());
+        }
+        return null;
+    }
+
+    private int argCountFromDescriptor(String descriptor){
+        if(descriptor==null)return 0;
+        try {
+            var params = DescriptorUtils.parseParameterTypes(descriptor);
+            return params.size();
+        } catch (IllegalArgumentException e){
+            return 0;
+        }
+    }
+
+    private String resolveMethodName(int cpIndex) {
+        if (cp == null) return "method";
+
+        CpInfo e = cp.entry(cpIndex);
+        if (e instanceof CpMethodref mr) {
+            CpNameAndType nt = (CpNameAndType) cp.entry(mr.nameAndTypeIndex());
+            return cp.getUtf8(nt.nameIndex());
+        }
+        return "method";
+    }
+
+    private Expr makeStaticFieldExpr(int cpIndex) {
+        if (cp == null) return null;
+        CpInfo e = cp.entry(cpIndex);
+        if (!(e instanceof CpFieldref fr)) {
+            return null;
+        }
+
+        // owner internal name: java/lang/System
+        String ownerInternal = cp.getClassName(fr.classIndex());
+        String ownerSimple = simpleClassName(ownerInternal);
+
+        CpNameAndType nt = (CpNameAndType) cp.entry(fr.nameAndTypeIndex());
+        String fieldName = cp.getUtf8(nt.nameIndex());
+
+        // System.out
+        return new FieldAccessExpr(new VarExpr(ownerSimple), fieldName);
+    }
+
+    private String simpleClassName(String internalName) {
+        // internalName: java/lang/System
+        int slash = internalName.lastIndexOf('/');
+        if (slash >= 0 && slash < internalName.length() - 1) {
+            return internalName.substring(slash + 1);
+        }
+        return internalName.replace('/', '.');
     }
 }
