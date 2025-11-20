@@ -1,6 +1,7 @@
 package net.letsdank.jd.ast;
 
 import net.letsdank.jd.ast.expr.*;
+import net.letsdank.jd.ast.stmt.AssignStmt;
 import net.letsdank.jd.ast.stmt.BlockStmt;
 import net.letsdank.jd.ast.stmt.ReturnStmt;
 import net.letsdank.jd.bytecode.insn.*;
@@ -66,6 +67,24 @@ public final class ExpressionBuilder {
                     case ILOAD_2 -> stack.push(varExpr(2));
                     case ILOAD_3 -> stack.push(varExpr(3));
 
+                    // istore_0..3: присваивание
+                    case ISTORE_0 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(0), value));
+                    }
+                    case ISTORE_1 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(1), value));
+                    }
+                    case ISTORE_2 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(2), value));
+                    }
+                    case ISTORE_3 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(3), value));
+                    }
+
                     default -> {
                         // игнорируем всякие nop, etc (пока что)
                     }
@@ -84,6 +103,11 @@ public final class ExpressionBuilder {
                     case ILOAD -> {
                         int idx = lv.localIndex();
                         stack.push(varExpr(idx));
+                    }
+                    case ISTORE -> {
+                        int idx = lv.localIndex();
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(idx), value));
                     }
                     default -> {
                         // istore и т.п. пока не обрабатываем
