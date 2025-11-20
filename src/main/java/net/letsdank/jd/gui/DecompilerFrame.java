@@ -1,5 +1,7 @@
 package net.letsdank.jd.gui;
 
+import net.letsdank.jd.ast.MethodAst;
+import net.letsdank.jd.ast.MethodDecompiler;
 import net.letsdank.jd.bytecode.BytecodeDecoder;
 import net.letsdank.jd.bytecode.insn.*;
 import net.letsdank.jd.io.ClassFileReader;
@@ -24,7 +26,11 @@ import java.util.List;
  */
 public final class DecompilerFrame extends JFrame {
     private final JTree tree;
-    private final JTextArea textArea;
+    private final JTextArea bytecodeArea;
+    private final JTextArea javaArea;
+    private final JTabbedPane tabbedPane;
+
+    private final MethodDecompiler methodDecompiler = new MethodDecompiler();
 
     public DecompilerFrame() {
         super("Java Decompiler");
@@ -41,7 +47,7 @@ public final class DecompilerFrame extends JFrame {
 
             if (node instanceof MethodTreeNode mNode) {
                 // Показать код конкретного метода
-                showMethodDisassembly(mNode.classFile(), mNode.method());
+                showMethodDetails(mNode.classFile(), mNode.method());
             } else if (node instanceof DefaultMutableTreeNode dtmn) {
                 // Для других узлов покажем общую информацию по классу,
                 // если в корне лежит ClassFile
@@ -51,16 +57,23 @@ public final class DecompilerFrame extends JFrame {
                 }
             }
         });
-        JScrollPane treeScroll = new JScrollPane(tree);
 
         // Правая панель: текст (будущий Java-код)
-        textArea = new JTextArea();
-        textArea.setEditable(false);
-        textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
-        JScrollPane textScroll = new JScrollPane(textArea);
+        bytecodeArea = new JTextArea();
+        bytecodeArea.setEditable(false);
+        bytecodeArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
 
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, treeScroll, textScroll);
+        javaArea = new JTextArea();
+        javaArea.setEditable(false);
+        javaArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+
+        tabbedPane = new JTabbedPane();
+        tabbedPane.addTab("Bytecode", new JScrollPane(bytecodeArea));
+        tabbedPane.addTab("Java", new JScrollPane(javaArea));
+
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, new JScrollPane(tree), tabbedPane);
         split.setDividerLocation(250);
+        getContentPane().add(split, BorderLayout.CENTER);
 
         add(split, BorderLayout.CENTER);
 
@@ -141,23 +154,27 @@ public final class DecompilerFrame extends JFrame {
         showClassSummary(cf);
     }
 
-    private void showMethodDisassembly(ClassFile cf, MethodInfo method) {
-        StringBuilder sb = new StringBuilder();
-
+    private void showMethodDetails(ClassFile cf, MethodInfo method) {
+        // --- заголовок ---
         ConstantPool cp = cf.constantPool();
         String className = cf.thisClassFqn();
         String methodName = cp.getUtf8(method.nameIndex());
         String desc = cp.getUtf8(method.descriptorIndex());
 
-        sb.append("Class: ").append(className).append('\n');
-        sb.append("Method: ").append(methodName).append(desc).append('\n');
-        sb.append('\n');
+        // --- байткод ---
+        StringBuilder bc = new StringBuilder();
+        bc.append("Class: ").append(className).append('\n');
+        bc.append("Method: ").append(methodName).append(desc).append('\n');
+        bc.append('\n');
 
         CodeAttribute codeAttr = method.findCodeAttribute();
         if (codeAttr == null) {
-            sb.append("  <no code>\n");
-            textArea.setText(sb.toString());
-            textArea.setCaretPosition(0);
+            bc.append("<no code>\n");
+            bytecodeArea.setText(bc.toString());
+            bytecodeArea.setCaretPosition(0);
+
+            javaArea.setText(bc.toString());
+            javaArea.setCaretPosition(0);
             return;
         }
 
@@ -165,29 +182,47 @@ public final class DecompilerFrame extends JFrame {
         BytecodeDecoder decoder = new BytecodeDecoder();
         List<Insn> insns = decoder.decode(code);
 
-        sb.append("Bytecode:\n\n");
+        bc.append("Bytecode:\n\n");
         for (Insn insn : insns) {
             if (insn instanceof SimpleInsn s) {
-                sb.append(String.format("  %4d: %s\n", s.offset(), s.opcode().mnemonic()));
+                bc.append(String.format("  %4d: %s\n",
+                        s.offset(), s.opcode().mnemonic()));
             } else if (insn instanceof LocalVarInsn lv) {
-                sb.append(String.format("  %4d: %s %d%n", lv.offset(), lv.opcode().mnemonic(), lv.localIndex()));
+                bc.append(String.format("  %4d: %s %d%n",
+                        lv.offset(), lv.opcode().mnemonic(), lv.localIndex()));
             } else if (insn instanceof IntOperandInsn io) {
-                sb.append(String.format("  %4d: %s %d%n", io.offset(), io.opcode().mnemonic(), io.operand()));
+                bc.append(String.format("  %4d: %s %d%n",
+                        io.offset(), io.opcode().mnemonic(), io.operand()));
             } else if (insn instanceof JumpInsn j) {
-                sb.append(String.format("  %4d: %s %d  ; target=%d%n",
+                bc.append(String.format("  %4d: %s %d  ; target=%d%n",
                         j.offset(), j.opcode().mnemonic(), j.rawOffsetDelta(), j.targetOffset()));
             } else if (insn instanceof ConstantPoolInsn cpi) {
                 int cpIndex = cpi.cpIndex();
                 String cpText = formatCpEntry(cp, cpIndex);
-                sb.append(String.format("  %4d: %s #%d    ; %s%n", cpi.offset(), cpi.opcode().mnemonic(), cpIndex, cpText));
+                bc.append(String.format("  %4d: %s #%d    ; %s%n",
+                        cpi.offset(), cpi.opcode().mnemonic(), cpIndex, cpText));
             } else if (insn instanceof UnknownInsn u) {
-                sb.append(String.format("  %4d: <unknown opcode 0x%02X, %d bytes remaining>\n",
+                bc.append(String.format("  %4d: <unknown opcode 0x%02X, %d bytes remaining>\n",
                         u.offset(), u.opcodeByte(), u.remainingBytes().length));
             }
         }
 
-        textArea.setText(sb.toString());
-        textArea.setCaretPosition(0);
+        bytecodeArea.setText(bc.toString());
+        bytecodeArea.setCaretPosition(0);
+
+        // --- Java (AST) ---
+
+        MethodAst ast = methodDecompiler.decompile(method,cf);
+        StringBuilder java = new StringBuilder();
+        java.append("// decompiled (experimental)\n");
+        java.append(className).append(".").append(methodName).append(desc).append(" {\n");
+        // у MethodAst уже есть body.toString(), можно чуть отформатировать
+        String bodyStr = ast.body().toString();
+        java.append("  ").append(bodyStr.replace("\n", "\n  ")).append("\n");
+        java.append("}\n");
+
+        javaArea.setText(java.toString());
+        javaArea.setCaretPosition(0);
     }
 
     private void showClassSummary(ClassFile cf) {
@@ -201,8 +236,10 @@ public final class DecompilerFrame extends JFrame {
 
         sb.append("Select a method in the tree to see its bytecode.\n\n");
 
-        textArea.setText(sb.toString());
-        textArea.setCaretPosition(0);
+        bytecodeArea.setText(sb.toString());
+        javaArea.setText(sb.toString());
+        bytecodeArea.setCaretPosition(0);
+        javaArea.setCaretPosition(0);
     }
 
     private String formatCpEntry(ConstantPool cp, int index) {
