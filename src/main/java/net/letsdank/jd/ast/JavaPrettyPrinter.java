@@ -1,0 +1,134 @@
+package net.letsdank.jd.ast;
+
+import net.letsdank.jd.ast.expr.Expr;
+import net.letsdank.jd.ast.stmt.BlockStmt;
+import net.letsdank.jd.ast.stmt.IfStmt;
+import net.letsdank.jd.ast.stmt.Stmt;
+import net.letsdank.jd.model.ClassFile;
+import net.letsdank.jd.model.ConstantPool;
+import net.letsdank.jd.model.MethodInfo;
+
+import java.lang.reflect.Modifier;
+import java.util.List;
+
+public final class JavaPrettyPrinter {
+    private final StringBuilder sb = new StringBuilder();
+    private int indent = 0;
+
+    public String printMethod(ClassFile cf, MethodInfo method, MethodAst ast) {
+        ConstantPool cp = cf.constantPool();
+        String desc = cp.getUtf8(method.descriptorIndex());
+
+        MethodLocalNameProvider nameProvider = new MethodLocalNameProvider(method.accessFlags(), desc);
+
+        String header = buildMethodHeader(cf, method, desc, nameProvider);
+        sb.append("// decompiled (experimental)\n");
+        appendLine(header + " {");
+        indent++;
+
+        BlockStmt body = ast.body();
+        for (Stmt stmt : body.statements()) {
+            printStmt(stmt);
+        }
+
+        indent--;
+        appendLine("}");
+
+        return sb.toString();
+    }
+
+    private String buildMethodHeader(ClassFile cf, MethodInfo method,
+                                     String desc, MethodLocalNameProvider names) {
+        ConstantPool cp = cf.constantPool();
+        String rawName = cp.getUtf8(method.nameIndex());
+
+        String methodName;
+        String returnType;
+        boolean isConstructor = "<init>".equals(rawName);
+        boolean isClinit = "<clinit>".equals(rawName);
+
+        if (isConstructor) {
+            String fqn = cf.thisClassFqn();
+            int dot = fqn.lastIndexOf('.');
+            methodName = (dot >= 0) ? fqn.substring(dot + 1) : fqn;
+            returnType = ""; // у конструкторов нет типа
+        } else if (isClinit) {
+            methodName = ""; // static init-блок
+            returnType = "";
+        } else {
+            methodName = rawName;
+            returnType = JavaTypeUtils.methodReturnType(desc);
+        }
+
+        StringBuilder header = new StringBuilder();
+
+        int acc = method.accessFlags();
+        if (Modifier.isPublic(acc)) header.append("public ");
+        else if (Modifier.isProtected(acc)) header.append("protected ");
+        else if (Modifier.isPrivate(acc)) header.append("private ");
+
+        if (Modifier.isStatic(acc) && !isClinit) header.append("static ");
+        if (Modifier.isFinal(acc)) header.append("final ");
+
+        if (!isConstructor && !isClinit) {
+            header.append(returnType).append(" ");
+        }
+
+        if (isClinit) {
+            // static init: "static"
+            header.append("static");
+            return header.toString();
+        }
+
+        header.append(methodName).append("(");
+
+        List<String> paramTypes = JavaTypeUtils.methodParameterTypes(desc);
+        List<String> paramNames = names.parameterNames();
+        for (int i = 0; i < paramTypes.size(); i++){
+            if(i>0)header.append(", ");
+            String type = paramTypes.get(i);
+            String name = (i < paramNames.size())
+                    ? paramNames.get(i)
+                    : ("arg"+i);
+            header.append(type).append(" ").append(name);
+        }
+        header.append(")");
+
+        return header.toString();
+    }
+
+    private void printStmt(Stmt stmt){
+        if(stmt instanceof IfStmt ifs) {
+            printIf(ifs);
+        } else {
+            appendLine(stmt.toString());
+        }
+    }
+
+    private void printIf(IfStmt ifs) {
+        Expr cond = ifs.condition();
+
+        appendLine("if (" + cond + ") {");
+        indent++;
+        for(Stmt s : ifs.thenBlock().statements()) {
+            printStmt(s);
+        }
+        indent--;
+
+        BlockStmt elseBlock = ifs.elseBlock();
+        if(elseBlock!=null&&!elseBlock.statements().isEmpty()) {
+            appendLine("} else {");
+            indent++;
+            for(Stmt s : elseBlock.statements()){
+                printStmt(s);
+            }
+            indent--;
+        }
+
+        appendLine("}");
+    }
+
+    private void appendLine(String line){
+        sb.append(" ".repeat(indent * 2)).append(line).append("\n");
+    }
+}

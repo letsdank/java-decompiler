@@ -1,7 +1,10 @@
 package net.letsdank.jd.gui;
 
+import net.letsdank.jd.ast.JavaPrettyPrinter;
 import net.letsdank.jd.ast.MethodAst;
 import net.letsdank.jd.ast.MethodDecompiler;
+import net.letsdank.jd.ast.stmt.BlockStmt;
+import net.letsdank.jd.ast.stmt.Stmt;
 import net.letsdank.jd.bytecode.BytecodeDecoder;
 import net.letsdank.jd.bytecode.insn.*;
 import net.letsdank.jd.io.ClassFileReader;
@@ -212,16 +215,10 @@ public final class DecompilerFrame extends JFrame {
 
         // --- Java (AST) ---
 
-        MethodAst ast = methodDecompiler.decompile(method,cf);
-        StringBuilder java = new StringBuilder();
-        java.append("// decompiled (experimental)\n");
-        java.append(className).append(".").append(methodName).append(desc).append(" {\n");
-        // у MethodAst уже есть body.toString(), можно чуть отформатировать
-        String bodyStr = ast.body().toString();
-        java.append("  ").append(bodyStr.replace("\n", "\n  ")).append("\n");
-        java.append("}\n");
-
-        javaArea.setText(java.toString());
+        MethodAst ast = methodDecompiler.decompile(method, cf);
+        JavaPrettyPrinter printer = new JavaPrettyPrinter();
+        String javaText = printer.printMethod(cf, method, ast);
+        javaArea.setText(javaText);
         javaArea.setCaretPosition(0);
     }
 
