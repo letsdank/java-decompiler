@@ -29,7 +29,7 @@ public final class BytecodeDecoder {
 
             switch (opcode.operandType()) {
                 case NONE -> {
-                    insns.add(new SimpleInsn(offset, opcode));
+                    insns.add(new SimpleInsn(start, opcode));
                 }
                 case LOCAL_INDEX_U1 -> {
                     if (offset >= code.length) {
@@ -68,8 +68,8 @@ public final class BytecodeDecoder {
                     int hi = code[offset] & 0xFF;
                     int lo = code[offset + 1] & 0xFF;
                     offset += 2;
-                    int delta = (short) ((hi << 8) | lo); // signed offset
-                    int target = offset + delta; // offset уже указывает на следующую инструкцию
+                    int delta = (short) ((hi << 8) | lo); // signed short
+                    int target = start + delta; // offset уже указывает на следующую инструкцию
                     insns.add(new JumpInsn(start, opcode, target, delta));
                 }
                 case CONSTPOOL_U1 -> {

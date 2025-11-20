@@ -1,4 +1,4 @@
-package net.letsdank.jd.decompiler.cfg;
+package net.letsdank.jd.cfg;
 
 import net.letsdank.jd.bytecode.BytecodeDecoder;
 import net.letsdank.jd.bytecode.Opcode;

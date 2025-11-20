@@ -1,4 +1,4 @@
-package net.letsdank.jd.decompiler.cfg;
+package net.letsdank.jd.cfg;
 
 import java.util.Collections;
 import java.util.List;

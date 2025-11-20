@@ -1,5 +1,6 @@
 package net.letsdank.jd.io;
 
+import net.letsdank.jd.fixtures.SimpleMethods;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.CodeAttribute;
 import net.letsdank.jd.model.ConstantPool;
@@ -16,8 +17,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ClassFileReaderTest {
     @Test
     void canReadOwnClassFile() throws IOException {
-        // Берем .class этого же теста
-        InputStream in = ClassFileReaderTest.class.getResourceAsStream("ClassFileReaderTest.class");
+        // Берем .class фикстуры
+        InputStream in = SimpleMethods.class.getResourceAsStream("SimpleMethods.class");
         assertNotNull(in, "Failed to load own .class as resource");
 
         ClassFileReader reader = new ClassFileReader();
@@ -33,7 +34,7 @@ class ClassFileReaderTest {
 
         // Имя класса в виде net.letsdank.jd.io.ClassFileReaderTest
         String fqn = cf.thisClassFqn();
-        assertTrue(fqn.endsWith("ClassFileReaderTest"), "Unexpected thisClassFqn: " + fqn);
+        assertTrue(fqn.endsWith("SimpleMethods"), "Unexpected thisClassFqn: " + fqn);
 
         // В пуле должен быть internal-name вида net/letsdank/jd/io/ClassFileReaderTest
         String internal = fqn.replace('.', '/');
@@ -42,7 +43,8 @@ class ClassFileReaderTest {
 
     @Test
     void hasMethodWithCodeAttribute() throws IOException {
-        InputStream in = ClassFileReaderTest.class.getResourceAsStream("ClassFileReaderTest.class");
+        // Берем .class фикстуры
+        InputStream in = SimpleMethods.class.getResourceAsStream("SimpleMethods.class");
         assertNotNull(in, "Failed to load own .class as resource");
 
         ClassFileReader reader = new ClassFileReader();
@@ -54,7 +56,7 @@ class ClassFileReaderTest {
 
         // Ищем метод "hasMethodWithCodeAttribute"
         MethodInfo target = Arrays.stream(methods)
-                .filter(m -> "hasMethodWithCodeAttribute".equals(cp.getUtf8(m.nameIndex())))
+                .filter(m -> "add".equals(cp.getUtf8(m.nameIndex())))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("Method not found"));
 
@@ -62,5 +64,26 @@ class ClassFileReaderTest {
         assertNotNull(code, "Method must have Code attribute");
         assertTrue(code.code().length > 0, "Bytecode length must be > 0");
         assertTrue(code.maxStack() > 0, "maxStack should be > 0");
+    }
+
+    @Test
+    void methodsAndFieldsArePresent() throws IOException {
+        InputStream in = SimpleMethods.class.getResourceAsStream("SimpleMethods.class");
+        assertNotNull(in, "Failed to load own SimpleMethods.class");
+
+        ClassFileReader reader = new ClassFileReader();
+        ClassFile cf = reader.read(in);
+        ConstantPool cp = cf.constantPool();
+
+        for (var m : cf.methods()) {
+            String name = cp.getUtf8(m.nameIndex());
+            // Конструктор инициализации тоже имеет Code
+            if (!"<init>".equals(name) && !"printHello".equals(name)
+                    && !"add".equals(name) && !"abs".equals(name)) {
+                continue; // Другие методы фикстуры можно игнорировать
+            }
+
+            assertNotNull(m.findCodeAttribute(), "Method " + name + " must have Code attribute");
+        }
     }
 }
