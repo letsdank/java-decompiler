@@ -193,6 +193,9 @@ public final class DecompilerFrame extends JFrame {
             } else if (insn instanceof LocalVarInsn lv) {
                 bc.append(String.format("  %4d: %s %d%n",
                         lv.offset(), lv.opcode().mnemonic(), lv.localIndex()));
+            } else if (insn instanceof IincInsn inc) {
+                bc.append(String.format("  %4d: %s %d %d%n",
+                        inc.offset(), inc.opcode().mnemonic(), inc.localIndex(), inc.delta()));
             } else if (insn instanceof IntOperandInsn io) {
                 bc.append(String.format("  %4d: %s %d%n",
                         io.offset(), io.opcode().mnemonic(), io.operand()));
@@ -203,7 +206,7 @@ public final class DecompilerFrame extends JFrame {
                 int cpIndex = cpi.cpIndex();
                 String cpText = formatCpEntry(cp, cpIndex);
                 bc.append(String.format("  %4d: %s #%d    ; %s%n",
-                        cpi.offset(), cpi.opcode().mnemonic(), cpIndex, cpText));
+                cpi.offset(), cpi.opcode().mnemonic(), cpIndex, cpText));
             } else if (insn instanceof UnknownInsn u) {
                 bc.append(String.format("  %4d: <unknown opcode 0x%02X, %d bytes remaining>\n",
                         u.offset(), u.opcodeByte(), u.remainingBytes().length));

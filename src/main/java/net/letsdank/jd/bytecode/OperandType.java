@@ -10,5 +10,6 @@ public enum OperandType {
     CONSTPOOL_U2,   // 2 байта: индекс в constant pool
     BRANCH_S2,      // переход: 2-байтовый signed offset относительно следующей инструкции
     BYTE_IMM,       // 1-байтовый immediate (bipush)
-    SHORT_IMM       // 2-байтовый immediate (sipush)
+    SHORT_IMM,      // 2-байтовый immediate (sipush)
+    IINC
 }

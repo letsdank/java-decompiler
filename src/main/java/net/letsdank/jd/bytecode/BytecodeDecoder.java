@@ -92,6 +92,17 @@ public final class BytecodeDecoder {
                     int cpIndex = (hi << 8) | lo;
                     insns.add(new ConstantPoolInsn(start, opcode, cpIndex));
                 }
+                case IINC -> {
+                    // iinc <index:u1> <const:s1>
+                    if (offset + 1 >= code.length) {
+                        insns.add(new UnknownInsn(start, opByte, Arrays.copyOfRange(code, start, code.length)));
+                        return insns;
+                    }
+                    int index = code[offset] & 0xFF;
+                    int delta = (byte) code[offset + 1]; // signed
+                    offset += 2;
+                    insns.add(new IincInsn(start, opcode, index, delta));
+                }
             }
         }
 

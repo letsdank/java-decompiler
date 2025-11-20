@@ -5,6 +5,7 @@ import net.letsdank.jd.ast.expr.Expr;
 import net.letsdank.jd.ast.expr.IntConstExpr;
 import net.letsdank.jd.ast.stmt.BlockStmt;
 import net.letsdank.jd.ast.stmt.IfStmt;
+import net.letsdank.jd.ast.stmt.LoopStmt;
 import net.letsdank.jd.ast.stmt.ReturnStmt;
 import net.letsdank.jd.bytecode.BytecodeDecoder;
 import net.letsdank.jd.bytecode.Opcode;
@@ -43,13 +44,21 @@ public final class MethodDecompiler {
         ControlFlowGraph cfg = cfgBuilder.build(code);
         Expr condition = findConditionExpr(cfg, localNames, cp);
 
-        // 2. Строим линейный AST по всему байткоду
+        // 2. Попытка распознать простой while
+        LoopStmt loop = tryBuildWhileLoop(cfg, localNames, cp);
+        if (loop != null) {
+            BlockStmt body = new BlockStmt();
+            body.add(loop);
+            return new MethodAst(name, desc, body);
+        }
+
+        // 3. Строим линейный AST по всему байткоду
         BytecodeDecoder decoder = new BytecodeDecoder();
         List<Insn> insns = decoder.decode(code);
         ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp);
         BlockStmt linearBody = exprBuilder.buildBlock(insns);
 
-        // 3. Если есть условие и два простых return подряд - собираем if/else
+        // 4. Если есть условие и два простых return подряд - собираем if/else
         if (condition != null) {
             IfStmt ifStmt = tryBuildIfElseFromLinear(condition, linearBody);
             if (ifStmt != null) {
@@ -77,7 +86,7 @@ public final class MethodDecompiler {
         for (BasicBlock bb : blocks) {
             var insns = bb.instructions();
             if (insns.isEmpty()) continue;
-            Insn last = insns.get(insns.size() - 1);
+            Insn last = insns.getLast();
             if (last instanceof JumpInsn j && JDUtils.isConditional(j.opcode())) {
                 condBlock = bb;
                 condJump = j;
@@ -172,5 +181,72 @@ public final class MethodDecompiler {
         elseBlock.add(second);
 
         return new IfStmt(condition, thenBlock, elseBlock);
+    }
+
+    private LoopStmt tryBuildWhileLoop(ControlFlowGraph cfg, LocalNameProvider localNames, ConstantPool cp) {
+        var blocks = cfg.blocks();
+        if (blocks.size() != 3) {
+            // сильно упрощаем задачу: только очень простой случай
+            return null;
+        }
+
+        BasicBlock condBlock = cfg.entryBlock();
+        if (condBlock == null) return null;
+
+        var condInsns = condBlock.instructions();
+        if (condInsns.isEmpty()) return null;
+
+        Insn last = condInsns.getLast();
+        if (!(last instanceof JumpInsn condJump) || !JDUtils.isConditional(condJump.opcode())) {
+            return null;
+        }
+        if (condBlock.successors().size() != 2) {
+            return null;
+        }
+
+        BasicBlock s1 = condBlock.successors().get(0);
+        BasicBlock s2 = condBlock.successors().get(1);
+
+        BasicBlock bodyBlock;
+        BasicBlock exitBlock;
+
+        if (endsWithGotoTo(s1, condBlock.startOffset())) {
+            bodyBlock = s1;
+            exitBlock = s2;
+        } else if (endsWithGotoTo(s2, condBlock.startOffset())) {
+            bodyBlock = s2;
+            exitBlock = s1;
+        } else {
+            return null;
+        }
+
+        // Строим условие
+        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp);
+        var stackBefore = exprBuilder.simulateStackBeforeBranch(condInsns);
+        var condition = buildConditionExpr(condJump, stackBefore);
+        if (condition == null) return null;
+
+        // Тело цикла - инструкции bodyBlock без финального goto
+        var bodyInsns = bodyBlock.instructions();
+        if (bodyInsns.isEmpty()) return null;
+
+        List<Insn> bodyWithoutGoto = bodyInsns;
+        Insn bodyLast = bodyInsns.getLast();
+        if (bodyLast instanceof JumpInsn j && j.opcode() == Opcode.GOTO) {
+            bodyWithoutGoto = bodyInsns.subList(0, bodyInsns.size() - 1);
+        }
+
+        var bodyAst = exprBuilder.buildBlock(bodyWithoutGoto);
+        return new LoopStmt(condition, bodyAst);
+    }
+
+    private boolean endsWithGotoTo(BasicBlock bb, int targetOffset) {
+        var insns = bb.instructions();
+        if (insns.isEmpty()) return false;
+        Insn last = insns.getLast();
+        if (last instanceof JumpInsn j && j.opcode() == Opcode.GOTO) {
+            return j.targetOffset() == targetOffset;
+        }
+        return false;
     }
 }

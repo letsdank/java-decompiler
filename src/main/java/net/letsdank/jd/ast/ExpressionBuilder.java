@@ -131,7 +131,7 @@ public final class ExpressionBuilder {
                     case LDC -> {
                         // ldc #idx -> константа из constant pool
                         CpInfo e = cp.entry(cpi.cpIndex());
-                        if(e instanceof CpString s){
+                        if (e instanceof CpString s) {
                             String text = cp.getUtf8(s.stringIndex());
                             stack.push(new StringLiteralExpr(text));
                         }
@@ -146,26 +146,26 @@ public final class ExpressionBuilder {
                         // 1. Определяем количество аргументов и void/non-void
                         String descriptor = resolveMethodDescriptor(cpi.cpIndex());
                         int argCount = argCountFromDescriptor(descriptor);
-                        boolean isVoid = descriptor!=null&&descriptor.endsWith(")V");
+                        boolean isVoid = descriptor != null && descriptor.endsWith(")V");
 
-                        int needed = argCount+1; // объект + аргументы
-                        if(stack.size()<needed){
+                        int needed = argCount + 1; // объект + аргументы
+                        if (stack.size() < needed) {
                             // не хватает на стеке - лучше пропустить, чем падать
                             break;
                         }
 
                         // 2. Снимаем аргументы (в обратном порядке) и target
                         List<Expr> args = new ArrayList<>(argCount);
-                        for(int i = 0;i<argCount;i++){
+                        for (int i = 0; i < argCount; i++) {
                             // Последний снятый аргумент - правый, поэтому добавляем в начало
-                            args.add(0,stack.pop());
+                            args.add(0, stack.pop());
                         }
                         Expr target = stack.pop();
 
                         String methodName = resolveMethodName(cpi.cpIndex());
-                        CallExpr call = new CallExpr(target,methodName,args);
+                        CallExpr call = new CallExpr(target, methodName, args);
 
-                        if(isVoid){
+                        if (isVoid) {
                             // println(...) и прочие void -> statement
                             block.add(new ExprStmt(call));
                         } else {
@@ -180,6 +180,19 @@ public final class ExpressionBuilder {
                         // остальные инструкции с cp пока игнорируем
                     }
                 }
+            } else if (insn instanceof IincInsn inc) {
+                int idx = inc.localIndex();
+                int delta = inc.delta();
+                // v = v + delta;
+                VarExpr v = varExpr(idx);
+                Expr rhs;
+                if (delta == 1) {
+                    // пока вместо v++ выведем v += 1
+                    rhs = new BinaryExpr("+", v, new IntConstExpr(1));
+                } else {
+                    rhs = new BinaryExpr("+", v, new IntConstExpr(delta));
+                }
+                block.add(new AssignStmt(v, rhs));
             } else if (insn instanceof UnknownInsn) {
                 // ничего
             }
@@ -255,22 +268,22 @@ public final class ExpressionBuilder {
         return stack;
     }
 
-    private String resolveMethodDescriptor(int cpIndex){
-        if(cp==null)return null;
+    private String resolveMethodDescriptor(int cpIndex) {
+        if (cp == null) return null;
         CpInfo e = cp.entry(cpIndex);
-        if(e instanceof CpMethodref mr){
-            CpNameAndType nt=(CpNameAndType) cp.entry(mr.nameAndTypeIndex());
+        if (e instanceof CpMethodref mr) {
+            CpNameAndType nt = (CpNameAndType) cp.entry(mr.nameAndTypeIndex());
             return cp.getUtf8(nt.descriptorIndex());
         }
         return null;
     }
 
-    private int argCountFromDescriptor(String descriptor){
-        if(descriptor==null)return 0;
+    private int argCountFromDescriptor(String descriptor) {
+        if (descriptor == null) return 0;
         try {
             var params = DescriptorUtils.parseParameterTypes(descriptor);
             return params.size();
-        } catch (IllegalArgumentException e){
+        } catch (IllegalArgumentException e) {
             return 0;
         }
     }

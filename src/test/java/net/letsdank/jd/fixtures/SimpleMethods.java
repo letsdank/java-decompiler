@@ -17,7 +17,14 @@ public class SimpleMethods {
         }
     }
 
-    public void printHello(){
+    public void printHello() {
         System.out.println("Hello");
+    }
+
+    public void loop(int n) {
+        int i = 0;
+        while (i < n) {
+            i++;
+        }
     }
 }

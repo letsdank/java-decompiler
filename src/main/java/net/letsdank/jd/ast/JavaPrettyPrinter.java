@@ -3,6 +3,7 @@ package net.letsdank.jd.ast;
 import net.letsdank.jd.ast.expr.Expr;
 import net.letsdank.jd.ast.stmt.BlockStmt;
 import net.letsdank.jd.ast.stmt.IfStmt;
+import net.letsdank.jd.ast.stmt.LoopStmt;
 import net.letsdank.jd.ast.stmt.Stmt;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.ConstantPool;
@@ -100,6 +101,8 @@ public final class JavaPrettyPrinter {
     private void printStmt(Stmt stmt){
         if(stmt instanceof IfStmt ifs) {
             printIf(ifs);
+        } else if (stmt instanceof LoopStmt loop){
+            printLoop(loop);
         } else {
             appendLine(stmt.toString());
         }
@@ -125,6 +128,16 @@ public final class JavaPrettyPrinter {
             indent--;
         }
 
+        appendLine("}");
+    }
+
+    private void printLoop(LoopStmt loop) {
+        appendLine("while (" + loop.condition() + ") {");
+        indent++;
+        for (Stmt s : loop.body().statements()) {
+            printStmt(s);
+        }
+        indent--;
         appendLine("}");
     }
 

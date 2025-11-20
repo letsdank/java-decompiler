@@ -35,6 +35,8 @@ public enum Opcode {
     IADD(0x60, "iadd"),
     INEG(0x74, "ineg"),
 
+    IINC(0x84, "iinc", OperandType.IINC),
+
     // --- условные переходы ---
     IFEQ(0x99, "ifeq", OperandType.BRANCH_S2),
     IFNE(0x9A, "ifne", OperandType.BRANCH_S2),
