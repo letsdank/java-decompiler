@@ -13,9 +13,9 @@ import java.io.InputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class MethodDecompilerTest {
+class MethodDecompilerAddTest {
     @Test
-    void decompileAddAndAbs() throws IOException {
+    void decompileAdd() throws IOException {
         // Загружаем .class SimpleMethods
         InputStream in = SimpleMethods.class.getResourceAsStream("SimpleMethods.class");
         assertNotNull(in, "Failed to load SimpleMethods.class");
@@ -25,18 +25,13 @@ class MethodDecompilerTest {
         ConstantPool cp = cf.constantPool();
 
         MethodInfo add = JDUtils.findMethod(cf, cp, "add", "(II)I");
-        MethodInfo abs = JDUtils.findMethod(cf, cp, "abs", "(I)I");
 
         MethodDecompiler decompiler = new MethodDecompiler();
         MethodAst addAst = decompiler.decompile(add, cf);
-        MethodAst absAst = decompiler.decompile(abs, cf);
-
 
         System.out.println("add AST: " + addAst);
-        System.out.println("abs AST: " + absAst);
 
         // Простейшие sanity-проверки
         assertTrue(addAst.toString().contains("+"), "add AST should contain '+'");
-        assertTrue(absAst.toString().contains("if "), "abs AST should contain if");
     }
 }
