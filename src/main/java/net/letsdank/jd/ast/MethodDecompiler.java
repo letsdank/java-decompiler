@@ -34,16 +34,18 @@ public final class MethodDecompiler {
             return new MethodAst(name, desc, new BlockStmt());
         }
 
+        LocalNameProvider localNames = new MethodLocalNameProvider(method.accessFlags(), desc);
+
         byte[] code = codeAttr.code();
 
         // 1. Строим CFG и пытаемся найти условный переход + условие
         ControlFlowGraph cfg = cfgBuilder.build(code);
-        Expr condition = findConditionExpr(cfg);
+        Expr condition = findConditionExpr(cfg, localNames);
 
         // 2. Строим линейный AST по всему байткоду
         BytecodeDecoder decoder = new BytecodeDecoder();
         List<Insn> insns = decoder.decode(code);
-        ExpressionBuilder exprBuilder = new ExpressionBuilder(new SimpleLocalNameProvider());
+        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames);
         BlockStmt linearBody = exprBuilder.buildBlock(insns);
 
         // 3. Если есть условие и два простых return подряд - собираем if/else
@@ -64,7 +66,7 @@ public final class MethodDecompiler {
      * Ищем первый блок, который заканчивается условным JumpInsn,
      * и строим Expr для условия.
      */
-    private Expr findConditionExpr(ControlFlowGraph cfg) {
+    private Expr findConditionExpr(ControlFlowGraph cfg, LocalNameProvider localName) {
         List<BasicBlock> blocks = cfg.blocks();
         if (blocks.isEmpty()) return null;
 
@@ -84,7 +86,7 @@ public final class MethodDecompiler {
         if (condBlock == null || condJump == null) return null;
 
         // Стек до перехода
-        ExpressionBuilder exprBuilder = new ExpressionBuilder(new SimpleLocalNameProvider());
+        ExpressionBuilder exprBuilder = new ExpressionBuilder(localName);
         var condInsns = condBlock.instructions();
         Deque<Expr> stackBefore = exprBuilder.simulateStackBeforeBranch(condInsns);
 
