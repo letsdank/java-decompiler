@@ -5,8 +5,9 @@ import net.letsdank.jd.ast.MethodDecompiler;
 import net.letsdank.jd.bytecode.BytecodeDecoder;
 import net.letsdank.jd.bytecode.insn.*;
 import net.letsdank.jd.io.ClassFileReader;
-import net.letsdank.jd.lang.JavaLanguageBackend;
+import net.letsdank.jd.lang.Language;
 import net.letsdank.jd.lang.LanguageBackend;
+import net.letsdank.jd.lang.LanguageBackends;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.CodeAttribute;
 import net.letsdank.jd.model.ConstantPool;
@@ -32,8 +33,7 @@ public final class DecompilerFrame extends JFrame {
     private final JTextArea javaArea;
     private final JTabbedPane tabbedPane;
 
-    private final MethodDecompiler methodDecompiler = new MethodDecompiler();
-    private final LanguageBackend languageBackend = new JavaLanguageBackend();
+    private LanguageBackend currentBackend = LanguageBackends.forLanguage(Language.JAVA);
 
     public DecompilerFrame() {
         super("Java Decompiler");
@@ -111,6 +111,8 @@ public final class DecompilerFrame extends JFrame {
         try (FileInputStream in = new FileInputStream(file)) {
             ClassFileReader reader = new ClassFileReader();
             ClassFile cf = reader.read(in);
+            // Автоопределение языка на основе class-файла
+            currentBackend = LanguageBackends.autoDetect(cf);
             showClassFile(file, cf);
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this, "Failed to read class file: " + ex.getMessage(),
@@ -206,7 +208,7 @@ public final class DecompilerFrame extends JFrame {
                 int cpIndex = cpi.cpIndex();
                 String cpText = formatCpEntry(cp, cpIndex);
                 bc.append(String.format("  %4d: %s #%d    ; %s%n",
-                cpi.offset(), cpi.opcode().mnemonic(), cpIndex, cpText));
+                        cpi.offset(), cpi.opcode().mnemonic(), cpIndex, cpText));
             } else if (insn instanceof UnknownInsn u) {
                 bc.append(String.format("  %4d: <unknown opcode 0x%02X, %d bytes remaining>\n",
                         u.offset(), u.opcodeByte(), u.remainingBytes().length));
@@ -218,8 +220,8 @@ public final class DecompilerFrame extends JFrame {
 
         // --- Java (AST) ---
 
-        MethodAst ast = methodDecompiler.decompile(method, cf);
-        String source = languageBackend.decompileMethod(cf,method,ast);
+        MethodDecompiler methodDecompiler = new MethodDecompiler();
+        String source = currentBackend.decompileMethod(cf, method, methodDecompiler.decompile(method, cf));
         javaArea.setText(source);
         javaArea.setCaretPosition(0);
     }
@@ -238,7 +240,8 @@ public final class DecompilerFrame extends JFrame {
         bytecodeArea.setText(sb.toString());
         bytecodeArea.setCaretPosition(0);
 
-        String source = languageBackend.decompileClass(cf, methodDecompiler);
+        MethodDecompiler methodDecompiler = new MethodDecompiler();
+        String source = currentBackend.decompileClass(cf, methodDecompiler);
         javaArea.setText(source);
         javaArea.setCaretPosition(0);
     }
