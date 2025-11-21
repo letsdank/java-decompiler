@@ -236,8 +236,10 @@ public final class DecompilerFrame extends JFrame {
         sb.append("Select a method in the tree to see its bytecode.\n\n");
 
         bytecodeArea.setText(sb.toString());
-        javaArea.setText(sb.toString());
         bytecodeArea.setCaretPosition(0);
+
+        String source = languageBackend.decompileClass(cf, methodDecompiler);
+        javaArea.setText(source);
         javaArea.setCaretPosition(0);
     }
 
