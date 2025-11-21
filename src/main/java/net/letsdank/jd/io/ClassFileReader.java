@@ -1,6 +1,13 @@
 package net.letsdank.jd.io;
 
 import net.letsdank.jd.model.*;
+import net.letsdank.jd.model.annotation.AnnotationInfo;
+import net.letsdank.jd.model.annotation.KotlinMetadataAnnotationInfo;
+import net.letsdank.jd.model.annotation.SimpleAnnotationInfo;
+import net.letsdank.jd.model.attribute.AttributeInfo;
+import net.letsdank.jd.model.attribute.CodeAttribute;
+import net.letsdank.jd.model.attribute.RawAttribute;
+import net.letsdank.jd.model.attribute.RuntimeVisibleAnnotationsAttribute;
 import net.letsdank.jd.model.cp.*;
 
 import java.io.ByteArrayInputStream;
@@ -315,14 +322,103 @@ public final class ClassFileReader {
     private AnnotationInfo readAnnotationInfo(ClassFileInput in, ConstantPool cp) throws IOException {
         int typeIndex = in.readU2();
         String descriptor = cp.getUtf8(typeIndex);
-
         int numElementValuePairs = in.readU2();
+
+        // Специализированная обработка @kotlin.Metadata
+        if ("Lkotlin/Metadata;".equals(descriptor)) {
+            return readKotlinMetadataAnnotation(descriptor, numElementValuePairs, in, cp);
+        }
+
+        // Для всех остальных аннотаций просто пропускаем пары и возвращаем SimpleAnnotationInfo
         for (int i = 0; i < numElementValuePairs; i++) {
             int elementNameIndex = in.readU2(); // элемент нам не интересен
             skipElementValue(in);
         }
 
-        return new AnnotationInfo(descriptor);
+        return new SimpleAnnotationInfo(descriptor);
+    }
+
+    private KotlinMetadataAnnotationInfo readKotlinMetadataAnnotation(String descriptor, int numElementValuePairs, ClassFileInput in, ConstantPool cp)
+            throws IOException {
+        int kind = 1;
+        int[] mv = null;
+        int[] bv = null;
+        String[] d1 = null;
+        String[] d2 = null;
+        String xs = null;
+        int xi = 0;
+
+        for (int i = 0; i < numElementValuePairs; i++) {
+            int elementNameIndex = in.readU2();
+            String name = cp.getUtf8(elementNameIndex);
+
+            switch (name) {
+                case "k" -> kind = readIntElementValue(in, cp);
+                case "mv" -> mv = readIntArrayElementValue(in, cp);
+                case "bv" -> bv = readIntArrayElementValue(in, cp);
+                case "d1" -> d1 = readStringArrayElementValue(in, cp);
+                case "d2" -> d2 = readStringArrayElementValue(in, cp);
+                case "xs" -> xs = readStringElementValue(in, cp);
+                case "pn" -> {
+                    // packageName - можно сохранить в xs или просто пропустить; пока пропустим
+                    skipElementValue(in);
+                }
+                default -> {
+                    // неизвестное поле аннотации - аккуратно пропускаем
+                    skipElementValue(in);
+                }
+            }
+        }
+
+        return new KotlinMetadataAnnotationInfo(descriptor, kind, mv, bv, d1, d2, xs, xi);
+    }
+
+    private int readIntElementValue(ClassFileInput in, ConstantPool cp) throws IOException {
+        int tag = in.readU1();
+        if (tag != 'I') {
+            throw new IOException("Expected int element_value with tag 'I', got: " + (char) tag);
+        }
+        int constIndex = in.readU2();
+        return cp.getInteger(constIndex);
+    }
+
+    private int[] readIntArrayElementValue(ClassFileInput in, ConstantPool cp) throws IOException {
+        int tag = in.readU1();
+        if (tag != '[') {
+            throw new IOException("Expected array element_value with tag '[', got: " + (char) tag);
+        }
+        int numValues = in.readU2();
+        int[] result = new int[numValues];
+        for (int i = 0; i < numValues; i++) {
+            result[i] = readIntElementValue(in, cp);
+        }
+        return result;
+    }
+
+    private String readStringElementValue(ClassFileInput in, ConstantPool cp) throws IOException {
+        int tag = in.readU1();
+        if (tag != 's') {
+            throw new IOException("Expected string element_value with tag 's', got: " + (char) tag);
+        }
+        int constIndex = in.readU2();
+        String s = cp.getUtf8(constIndex);
+        if (s == null) {
+            throw new IOException("UTF8 at index " + constIndex + " is null");
+        }
+        return s;
+    }
+
+    private String[] readStringArrayElementValue(ClassFileInput in, ConstantPool cp) throws IOException {
+        int tag = in.readU1();
+        if (tag != '[') {
+            throw new IOException("Expected array element_value with tag '[', got: " + (char) tag);
+        }
+        int numValues = in.readU2();
+        String[] result = new String[numValues];
+        for (int i = 0; i < numValues; i++) {
+            result[i] = readStringElementValue(in, cp);
+        }
+        return result;
     }
 
     private void skipElementValue(ClassFileInput in) throws IOException {

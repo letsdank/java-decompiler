@@ -1,6 +1,10 @@
 package net.letsdank.jd.lang;
 
 import net.letsdank.jd.model.*;
+import net.letsdank.jd.model.annotation.AnnotationInfo;
+import net.letsdank.jd.model.annotation.SimpleAnnotationInfo;
+import net.letsdank.jd.model.attribute.AttributeInfo;
+import net.letsdank.jd.model.attribute.RuntimeVisibleAnnotationsAttribute;
 
 /**
  * Детектор Kotlin-классов.

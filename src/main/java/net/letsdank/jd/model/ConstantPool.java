@@ -2,6 +2,7 @@ package net.letsdank.jd.model;
 
 import net.letsdank.jd.model.cp.CpClass;
 import net.letsdank.jd.model.cp.CpInfo;
+import net.letsdank.jd.model.cp.CpInteger;
 import net.letsdank.jd.model.cp.CpUtf8;
 
 /**
@@ -24,6 +25,15 @@ public final class ConstantPool {
             throw new IndexOutOfBoundsException("cp index: " + index);
         }
         return entries[index];
+    }
+
+    public Integer getInteger(int index) {
+        CpInfo e = entry(index);
+        if (e instanceof CpInteger ci) {
+            return ci.value();
+        }
+        throw new IllegalStateException("Expected CONSTANT_Integer at #" + index +
+                " but was " + e.getClass().getSimpleName());
     }
 
     public String getUtf8(int index) {
