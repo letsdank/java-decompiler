@@ -12,6 +12,12 @@ public enum Opcode {
     ILOAD_2(0x1C, "iload_2"),
     ILOAD_3(0x1D, "iload_3"),
 
+    ALOAD(0x19,"aload",OperandType.LOCAL_INDEX_U1),
+    ALOAD_0(0x2A,"aload_0"),
+    ALOAD_1(0x2B,"aload_1"),
+    ALOAD_2(0x2C,"aload_2"),
+    ALOAD_3(0x2D,"aload_3"),
+
     ISTORE(0x36, "istore", OperandType.LOCAL_INDEX_U1),
     ISTORE_0(0x3B, "istore_0"),
     ISTORE_1(0x3C, "istore_1"),

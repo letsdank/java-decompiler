@@ -145,8 +145,8 @@ public final class JavaPrettyPrinter {
     }
 
     private void printFor(ForStmt fs) {
-        String initStr = stmtToInline(fs.init());
-        String updateStr = stmtToInline(fs.update());
+        String initStr = fs.init() != null ? stmtToInline(fs.init()) : "";
+        String updateStr = fs.update() != null ? stmtToInline(fs.update()) : "";
 
         appendLine("for (" + initStr + " " + fs.condition() + "; " + updateStr + ") {");
         indent++;

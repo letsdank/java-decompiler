@@ -73,6 +73,12 @@ public final class ExpressionBuilder {
                     case ILOAD_2 -> stack.push(varExpr(2));
                     case ILOAD_3 -> stack.push(varExpr(3));
 
+                    // ссылочные локалки без операнда: aload_0..3
+                    case ALOAD_0 -> stack.push(varExpr(0));
+                    case ALOAD_1 -> stack.push(varExpr(1));
+                    case ALOAD_2 -> stack.push(varExpr(2));
+                    case ALOAD_3 -> stack.push(varExpr(3));
+
                     // istore_0..3: присваивание
                     case ISTORE_0 -> {
                         Expr value = stack.pop();
@@ -109,6 +115,10 @@ public final class ExpressionBuilder {
                     case ILOAD -> {
                         int idx = lv.localIndex();
                         stack.push(varExpr(idx));
+                    }
+                    case ALOAD -> {
+                        int idx = lv.localIndex();
+                        stack.push(varExpr(idx)); // this, obj, массив и прочие ссылки
                     }
                     case ISTORE -> {
                         int idx = lv.localIndex();
@@ -285,6 +295,12 @@ public final class ExpressionBuilder {
                     case ILOAD_2 -> stack.push(varExpr(2));
                     case ILOAD_3 -> stack.push(varExpr(3));
 
+                    // aload_0..3
+                    case ALOAD_0 -> stack.push(varExpr(0));
+                    case ALOAD_1 -> stack.push(varExpr(1));
+                    case ALOAD_2 -> stack.push(varExpr(2));
+                    case ALOAD_3 -> stack.push(varExpr(3));
+
                     default -> {
                     }
                 }
@@ -292,7 +308,11 @@ public final class ExpressionBuilder {
                 switch (lv.opcode()) {
                     case ILOAD -> {
                         int idx = lv.localIndex();
-                        stack.push(new VarExpr(localNames.nameForLocal(idx)));
+                        stack.push(varExpr(idx));
+                    }
+                    case ALOAD -> {
+                        int idx = lv.localIndex();
+                        stack.push(varExpr(idx));
                     }
                     default -> {
                     }

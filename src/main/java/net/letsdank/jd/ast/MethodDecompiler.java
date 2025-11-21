@@ -3,9 +3,8 @@ package net.letsdank.jd.ast;
 import net.letsdank.jd.ast.expr.BinaryExpr;
 import net.letsdank.jd.ast.expr.Expr;
 import net.letsdank.jd.ast.expr.IntConstExpr;
-import net.letsdank.jd.ast.stmt.BlockStmt;
-import net.letsdank.jd.ast.stmt.IfStmt;
-import net.letsdank.jd.ast.stmt.LoopStmt;
+import net.letsdank.jd.ast.expr.VarExpr;
+import net.letsdank.jd.ast.stmt.*;
 import net.letsdank.jd.bytecode.BytecodeDecoder;
 import net.letsdank.jd.bytecode.Opcode;
 import net.letsdank.jd.bytecode.insn.Insn;
@@ -21,6 +20,7 @@ import net.letsdank.jd.model.MethodInfo;
 import net.letsdank.jd.utils.JDUtils;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 
@@ -48,7 +48,7 @@ public final class MethodDecompiler {
         if (loop != null) {
             BlockStmt body = new BlockStmt();
             body.add(loop);
-            return new MethodAst(name, desc, body);
+            return postProcessLoops(new MethodAst(name, desc, body));
         }
 
         // 3. if/else через CFG
@@ -56,7 +56,7 @@ public final class MethodDecompiler {
         if (ifStmt != null) {
             BlockStmt body = new BlockStmt();
             body.add(ifStmt);
-            return new MethodAst(name, desc, body);
+            return postProcessLoops(new MethodAst(name, desc, body));
         }
 
         // 3. Строим линейный AST по всему байткоду
@@ -66,7 +66,7 @@ public final class MethodDecompiler {
         BlockStmt linearBody = exprBuilder.buildBlock(insns);
 
         // Fallback: просто линейный AST
-        return new MethodAst(name, desc, linearBody);
+        return postProcessLoops(new MethodAst(name, desc, linearBody));
     }
 
     /**
@@ -368,5 +368,78 @@ public final class MethodDecompiler {
             // Для простоты пока вернем condForJump (то есть, без инверсии)
             return condForJump;
         }
+    }
+
+    private MethodAst postProcessLoops(MethodAst ast) {
+        BlockStmt body = ast.body();
+        BlockStmt transformed = transformBlock(body);
+        if (transformed == body) return ast;
+        return new MethodAst(ast.name(), ast.descriptor(), transformed);
+    }
+
+    private BlockStmt transformBlock(BlockStmt block) {
+        var src = block.statements();
+        List<Stmt> result = new ArrayList<>(src.size());
+
+        for (Stmt s : src) {
+            if (s instanceof LoopStmt loop) {
+                result.add(transformLoop(loop));
+            } else if (s instanceof IfStmt ifs) {
+                // рекурсивно обрабатываем then/else
+                BlockStmt thenT = transformBlock(ifs.thenBlock());
+                BlockStmt elseT = ifs.elseBlock() != null ? transformBlock(ifs.elseBlock()) : null;
+                result.add(new IfStmt(ifs.condition(), thenT, elseT));
+            } else {
+                result.add(s);
+            }
+        }
+
+        return new BlockStmt(result);
+    }
+
+    // Превращаем конкретный LoopStmt -> ForStmt (или оставляем while)
+    private Stmt transformLoop(LoopStmt loop) {
+        BlockStmt body = loop.body();
+        var bodyStmts = body.statements();
+        if (bodyStmts.isEmpty()) return loop;
+
+        // рекурсивно трансформируем внутренности цикла
+        BlockStmt transformedBody = transformBlock(new BlockStmt(bodyStmts));
+        var transformedStmts = transformedBody.statements();
+        if (transformedStmts.isEmpty()) {
+            return new LoopStmt(loop.condition(), transformedBody);
+        }
+
+        Stmt last = transformedStmts.getLast();
+        AssignStmt update = extractSimpleUpdate(last);
+        if (update == null) {
+            // не узнали шаблон update -> оставляем while
+            return new LoopStmt(loop.condition(), transformedBody);
+        }
+
+        // выкидываем update из конца тела
+        var newBodyList = new ArrayList<>(transformedStmts);
+        newBodyList.removeLast();
+        BlockStmt newBody = new BlockStmt(newBodyList);
+
+        // init пока не знаем -> делаем пустой; это все равно валидный for
+        ForStmt forStmt = new ForStmt(null, loop.condition(), update, newBody);
+        return forStmt;
+    }
+
+    // Проверка, что последнее выражение - простой инкремент i = 1 + 1
+    private AssignStmt extractSimpleUpdate(Stmt stmt) {
+        if (!(stmt instanceof AssignStmt as)) return null;
+        if (!(as.target() instanceof VarExpr tv)) return null;
+
+        Expr value = as.value();
+        if (!(value instanceof BinaryExpr be)) return null;
+        if (!"+".equals(be.op())) return null;
+        if (!(be.left() instanceof VarExpr lv)) return null;
+        if (!(be.right() instanceof IntConstExpr c)) return null;
+        if (!tv.name().equals(lv.name())) return null;
+
+        // i = i + 1 / i = i + N (N >= 1)
+        return as;
     }
 }

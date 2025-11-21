@@ -1,6 +1,28 @@
 package net.letsdank.jd.fixtures;
 
 public class SimpleMethods {
+
+    private int value;
+    private static int counter;
+
+    public void setValue(int x) {
+        this.value=x;
+    }
+
+    public void incCounter(){
+        counter++;
+    }
+
+    public void staticCall() {
+        int y = Math.abs(-1);
+    }
+
+    public void forLoop(int n){
+        for(int i = 0; i < n; i++){
+            System.out.println(i);
+        }
+    }
+
     public int add(int a, int b) {
         return a + b;
     }
