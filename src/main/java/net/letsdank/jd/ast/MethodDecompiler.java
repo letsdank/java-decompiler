@@ -397,34 +397,18 @@ public final class MethodDecompiler {
         return new BlockStmt(result);
     }
 
-    // Превращаем конкретный LoopStmt -> ForStmt (или оставляем while)
+    // Временно не распознаем for-циклы автоматически.
+    // Мы только рекурсивно нормализуем тело (if/loops внутри),
+    // но сам цикл остается while.
     private Stmt transformLoop(LoopStmt loop) {
         BlockStmt body = loop.body();
-        var bodyStmts = body.statements();
-        if (bodyStmts.isEmpty()) return loop;
+        BlockStmt transformedBody = transformBlock(body);
 
-        // рекурсивно трансформируем внутренности цикла
-        BlockStmt transformedBody = transformBlock(new BlockStmt(bodyStmts));
-        var transformedStmts = transformedBody.statements();
-        if (transformedStmts.isEmpty()) {
-            return new LoopStmt(loop.condition(), transformedBody);
-        }
+        // Если тело не изменилось, просто возвращаем исходный цикл
+        if (transformedBody.equals(body)) return loop;
 
-        Stmt last = transformedStmts.getLast();
-        AssignStmt update = extractSimpleUpdate(last);
-        if (update == null) {
-            // не узнали шаблон update -> оставляем while
-            return new LoopStmt(loop.condition(), transformedBody);
-        }
-
-        // выкидываем update из конца тела
-        var newBodyList = new ArrayList<>(transformedStmts);
-        newBodyList.removeLast();
-        BlockStmt newBody = new BlockStmt(newBodyList);
-
-        // init пока не знаем -> делаем пустой; это все равно валидный for
-        ForStmt forStmt = new ForStmt(null, loop.condition(), update, newBody);
-        return forStmt;
+        // Иначе создаем новый LoopStmt с тем же условием, но нормализованным телом
+        return new LoopStmt(loop.condition(), transformedBody);
     }
 
     // Проверка, что последнее выражение - простой инкремент i = 1 + 1

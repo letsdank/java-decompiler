@@ -19,23 +19,23 @@ import static org.junit.jupiter.api.Assertions.*;
 class MethodDecompilerLoopTest {
 
     @Test
-    void decompileLoopProducesWhile()throws IOException {
+    void decompileLoopProducesWhile() throws IOException {
         InputStream in = SimpleMethods.class.getResourceAsStream("SimpleMethods.class");
         assertNotNull(in);
 
-        ClassFileReader reader=new ClassFileReader();
+        ClassFileReader reader = new ClassFileReader();
         ClassFile cf = reader.read(in);
         ConstantPool cp = cf.constantPool();
 
-        MethodInfo loop = JDUtils.findMethod(cf,cp,"loop","(I)V");
+        MethodInfo loop = JDUtils.findMethod(cf, cp, "loop", "(I)V");
 
         MethodDecompiler decompiler = new MethodDecompiler();
-        MethodAst ast = decompiler.decompile(loop,cf);
+        MethodAst ast = decompiler.decompile(loop, cf);
 
         JavaPrettyPrinter printer = new JavaPrettyPrinter();
-        String javaText = printer.printMethod(cf,loop,ast);
+        String javaText = printer.printMethod(cf, loop, ast);
 
-        System.out.println("loop decompiled:\n"+javaText);
+        System.out.println("loop decompiled:\n" + javaText);
 
         assertTrue(javaText.contains("while ("), "Decompiled loop(I)V must contain 'while ('");
     }
