@@ -1,4 +1,7 @@
-package net.letsdank.jd.model;
+package net.letsdank.jd.model.attribute;
+
+import net.letsdank.jd.model.LineNumberTableAttribute;
+import net.letsdank.jd.model.LocalVariableTableAttribute;
 
 /**
  * Представление атрибута Code метода.

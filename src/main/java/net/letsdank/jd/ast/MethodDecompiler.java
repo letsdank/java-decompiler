@@ -14,7 +14,7 @@ import net.letsdank.jd.cfg.BasicBlock;
 import net.letsdank.jd.cfg.CfgBuilder;
 import net.letsdank.jd.cfg.ControlFlowGraph;
 import net.letsdank.jd.model.ClassFile;
-import net.letsdank.jd.model.CodeAttribute;
+import net.letsdank.jd.model.attribute.CodeAttribute;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
 import net.letsdank.jd.utils.JDUtils;

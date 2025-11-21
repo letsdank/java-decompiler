@@ -1,6 +1,5 @@
 package net.letsdank.jd.gui;
 
-import net.letsdank.jd.ast.MethodAst;
 import net.letsdank.jd.ast.MethodDecompiler;
 import net.letsdank.jd.bytecode.BytecodeDecoder;
 import net.letsdank.jd.bytecode.insn.*;
@@ -9,7 +8,7 @@ import net.letsdank.jd.lang.Language;
 import net.letsdank.jd.lang.LanguageBackend;
 import net.letsdank.jd.lang.LanguageBackends;
 import net.letsdank.jd.model.ClassFile;
-import net.letsdank.jd.model.CodeAttribute;
+import net.letsdank.jd.model.attribute.CodeAttribute;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
 import net.letsdank.jd.model.cp.*;

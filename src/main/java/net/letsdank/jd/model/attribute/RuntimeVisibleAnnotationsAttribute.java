@@ -1,4 +1,6 @@
-package net.letsdank.jd.model;
+package net.letsdank.jd.model.attribute;
+
+import net.letsdank.jd.model.annotation.AnnotationInfo;
 
 /**
  * Атрибут RuntimeVisibleAnnotations.

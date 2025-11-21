@@ -2,7 +2,7 @@ package net.letsdank.jd.io;
 
 import net.letsdank.jd.fixtures.SimpleMethods;
 import net.letsdank.jd.model.ClassFile;
-import net.letsdank.jd.model.CodeAttribute;
+import net.letsdank.jd.model.attribute.CodeAttribute;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
 import org.junit.jupiter.api.Test;

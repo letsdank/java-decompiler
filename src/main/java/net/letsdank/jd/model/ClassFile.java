@@ -1,5 +1,7 @@
 package net.letsdank.jd.model;
 
+import net.letsdank.jd.model.attribute.AttributeInfo;
+
 /**
  * Минимальное представление class-файла.
  */

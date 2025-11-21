@@ -1,4 +1,4 @@
-package net.letsdank.jd.model;
+package net.letsdank.jd.model.attribute;
 
 /**
  * Атрибут, который мы пока никак не интерпретируем.

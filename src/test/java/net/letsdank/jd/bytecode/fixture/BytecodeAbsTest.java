@@ -7,7 +7,7 @@ import net.letsdank.jd.bytecode.insn.JumpInsn;
 import net.letsdank.jd.fixtures.SimpleMethods;
 import net.letsdank.jd.io.ClassFileReader;
 import net.letsdank.jd.model.ClassFile;
-import net.letsdank.jd.model.CodeAttribute;
+import net.letsdank.jd.model.attribute.CodeAttribute;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
 import net.letsdank.jd.utils.JDUtils;

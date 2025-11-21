@@ -1,4 +1,6 @@
 package net.letsdank.jd.model;
 
-public record FieldInfo(int accessFlags,int nameIndex,int descriptorIndex, AttributeInfo[] attributes) {
+import net.letsdank.jd.model.attribute.AttributeInfo;
+
+public record FieldInfo(int accessFlags, int nameIndex, int descriptorIndex, AttributeInfo[] attributes) {
 }
