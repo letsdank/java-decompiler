@@ -1,10 +1,10 @@
 package net.letsdank.jd.ast;
 
+import net.letsdank.jd.ast.expr.BinaryExpr;
 import net.letsdank.jd.ast.expr.Expr;
-import net.letsdank.jd.ast.stmt.BlockStmt;
-import net.letsdank.jd.ast.stmt.IfStmt;
-import net.letsdank.jd.ast.stmt.LoopStmt;
-import net.letsdank.jd.ast.stmt.Stmt;
+import net.letsdank.jd.ast.expr.IntConstExpr;
+import net.letsdank.jd.ast.expr.VarExpr;
+import net.letsdank.jd.ast.stmt.*;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
@@ -17,6 +17,10 @@ public final class JavaPrettyPrinter {
     private int indent = 0;
 
     public String printMethod(ClassFile cf, MethodInfo method, MethodAst ast) {
+        // сброс
+        sb.setLength(0);
+        indent = 0;
+
         ConstantPool cp = cf.constantPool();
         String desc = cp.getUtf8(method.descriptorIndex());
 
@@ -85,12 +89,12 @@ public final class JavaPrettyPrinter {
 
         List<String> paramTypes = JavaTypeUtils.methodParameterTypes(desc);
         List<String> paramNames = names.parameterNames();
-        for (int i = 0; i < paramTypes.size(); i++){
-            if(i>0)header.append(", ");
+        for (int i = 0; i < paramTypes.size(); i++) {
+            if (i > 0) header.append(", ");
             String type = paramTypes.get(i);
             String name = (i < paramNames.size())
                     ? paramNames.get(i)
-                    : ("arg"+i);
+                    : ("arg" + i);
             header.append(type).append(" ").append(name);
         }
         header.append(")");
@@ -98,13 +102,20 @@ public final class JavaPrettyPrinter {
         return header.toString();
     }
 
-    private void printStmt(Stmt stmt){
-        if(stmt instanceof IfStmt ifs) {
+    private void printStmt(Stmt stmt) {
+        if (stmt instanceof IfStmt ifs) {
             printIf(ifs);
-        } else if (stmt instanceof LoopStmt loop){
+        } else if (stmt instanceof LoopStmt loop) {
             printLoop(loop);
+        } else if (stmt instanceof AssignStmt as) {
+            printAssign(as);
+        } else if (stmt instanceof ReturnStmt rs) {
+            printReturn(rs);
+        } else if (stmt instanceof ExprStmt es) {
+            printExprStmt(es);
         } else {
-            appendLine(stmt.toString());
+            // временный fallback, чтобы видеть неожиданные типы
+            appendLine("// TODO: " + stmt.getClass().getSimpleName() + " -> " + stmt);
         }
     }
 
@@ -113,16 +124,16 @@ public final class JavaPrettyPrinter {
 
         appendLine("if (" + cond + ") {");
         indent++;
-        for(Stmt s : ifs.thenBlock().statements()) {
+        for (Stmt s : ifs.thenBlock().statements()) {
             printStmt(s);
         }
         indent--;
 
         BlockStmt elseBlock = ifs.elseBlock();
-        if(elseBlock!=null&&!elseBlock.statements().isEmpty()) {
+        if (elseBlock != null && !elseBlock.statements().isEmpty()) {
             appendLine("} else {");
             indent++;
-            for(Stmt s : elseBlock.statements()){
+            for (Stmt s : elseBlock.statements()) {
                 printStmt(s);
             }
             indent--;
@@ -141,7 +152,31 @@ public final class JavaPrettyPrinter {
         appendLine("}");
     }
 
-    private void appendLine(String line){
+    private void printAssign(AssignStmt as) {
+        Expr target = as.target();
+        Expr value = as.value();
+
+        // v2 = v2 + 1 -> v2++;
+        if (target instanceof VarExpr tv && value instanceof BinaryExpr be && "+".equals(be.op()) &&
+                be.left() instanceof VarExpr lv && be.right() instanceof IntConstExpr c &&
+                c.value() == 1 && tv.name().equals(lv.name())) {
+            appendLine(tv.name() + "++;");
+            return;
+        }
+
+        appendLine(target.toString() + " = " + value.toString() + ";");
+    }
+
+    private void printReturn(ReturnStmt rs) {
+        if (rs.value() == null) appendLine("return;");
+        else appendLine("return " + rs.value().toString() + ";");
+    }
+
+    private void printExprStmt(ExprStmt es) {
+        appendLine(es.expr().toString() + ";");
+    }
+
+    private void appendLine(String line) {
         sb.append(" ".repeat(indent * 2)).append(line).append("\n");
     }
 }
