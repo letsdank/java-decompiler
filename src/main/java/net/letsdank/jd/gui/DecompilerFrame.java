@@ -1,13 +1,12 @@
 package net.letsdank.jd.gui;
 
-import net.letsdank.jd.ast.JavaPrettyPrinter;
 import net.letsdank.jd.ast.MethodAst;
 import net.letsdank.jd.ast.MethodDecompiler;
-import net.letsdank.jd.ast.stmt.BlockStmt;
-import net.letsdank.jd.ast.stmt.Stmt;
 import net.letsdank.jd.bytecode.BytecodeDecoder;
 import net.letsdank.jd.bytecode.insn.*;
 import net.letsdank.jd.io.ClassFileReader;
+import net.letsdank.jd.lang.JavaLanguageBackend;
+import net.letsdank.jd.lang.LanguageBackend;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.CodeAttribute;
 import net.letsdank.jd.model.ConstantPool;
@@ -34,6 +33,7 @@ public final class DecompilerFrame extends JFrame {
     private final JTabbedPane tabbedPane;
 
     private final MethodDecompiler methodDecompiler = new MethodDecompiler();
+    private final LanguageBackend languageBackend = new JavaLanguageBackend();
 
     public DecompilerFrame() {
         super("Java Decompiler");
@@ -219,9 +219,8 @@ public final class DecompilerFrame extends JFrame {
         // --- Java (AST) ---
 
         MethodAst ast = methodDecompiler.decompile(method, cf);
-        JavaPrettyPrinter printer = new JavaPrettyPrinter();
-        String javaText = printer.printMethod(cf, method, ast);
-        javaArea.setText(javaText);
+        String source = languageBackend.decompileMethod(cf,method,ast);
+        javaArea.setText(source);
         javaArea.setCaretPosition(0);
     }
 
