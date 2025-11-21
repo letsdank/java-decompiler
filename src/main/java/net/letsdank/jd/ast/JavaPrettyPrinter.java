@@ -107,6 +107,8 @@ public final class JavaPrettyPrinter {
             printIf(ifs);
         } else if (stmt instanceof LoopStmt loop) {
             printLoop(loop);
+        } else if (stmt instanceof ForStmt forStmt) {
+            printFor(forStmt);
         } else if (stmt instanceof AssignStmt as) {
             printAssign(as);
         } else if (stmt instanceof ReturnStmt rs) {
@@ -142,6 +144,19 @@ public final class JavaPrettyPrinter {
         appendLine("}");
     }
 
+    private void printFor(ForStmt fs) {
+        String initStr = stmtToInline(fs.init());
+        String updateStr = stmtToInline(fs.update());
+
+        appendLine("for (" + initStr + " " + fs.condition() + "; " + updateStr + ") {");
+        indent++;
+        for (Stmt s : fs.body().statements()) {
+            printStmt(s);
+        }
+        indent--;
+        appendLine("}");
+    }
+
     private void printLoop(LoopStmt loop) {
         appendLine("while (" + loop.condition() + ") {");
         indent++;
@@ -174,6 +189,20 @@ public final class JavaPrettyPrinter {
 
     private void printExprStmt(ExprStmt es) {
         appendLine(es.expr().toString() + ";");
+    }
+
+    /**
+     * Превращаем простой Stmt вроде AssignStmt/ExprStmt в однострочное "i = 0;" или "i++;".
+     */
+    private String stmtToInline(Stmt s) {
+        if (s instanceof AssignStmt as) {
+            return as.target().toString() + " = " + as.value().toString() + ";";
+        }
+        if (s instanceof ExprStmt es) {
+            return es.expr().toString() + ";";
+        }
+        // fallback
+        return s.toString();
     }
 
     private void appendLine(String line) {

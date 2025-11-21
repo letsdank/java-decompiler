@@ -145,14 +145,9 @@ public final class ExpressionBuilder {
                     case INVOKEVIRTUAL -> {
                         // 1. Определяем количество аргументов и void/non-void
                         String descriptor = resolveMethodDescriptor(cpi.cpIndex());
+                        String methodName = resolveMethodName(cpi.cpIndex());
                         int argCount = argCountFromDescriptor(descriptor);
                         boolean isVoid = descriptor != null && descriptor.endsWith(")V");
-
-                        int needed = argCount + 1; // объект + аргументы
-                        if (stack.size() < needed) {
-                            // не хватает на стеке - лучше пропустить, чем падать
-                            break;
-                        }
 
                         // 2. Снимаем аргументы (в обратном порядке) и target
                         List<Expr> args = new ArrayList<>(argCount);
@@ -160,10 +155,10 @@ public final class ExpressionBuilder {
                             // Последний снятый аргумент - правый, поэтому добавляем в начало
                             args.add(0, stack.pop());
                         }
-                        Expr target = stack.pop();
 
-                        String methodName = resolveMethodName(cpi.cpIndex());
-                        CallExpr call = new CallExpr(target, methodName, args);
+                        // снимаем объект (this)
+                        Expr target = stack.pop();
+                        CallExpr call = new CallExpr(target, methodName, List.copyOf(args));
 
                         if (isVoid) {
                             // println(...) и прочие void -> statement
@@ -174,7 +169,53 @@ public final class ExpressionBuilder {
                         }
                     }
                     case INVOKESTATIC -> {
-                        // Тут можно в дальнейшем поддерживать статические вызовы вида Foo.bar(x)
+                        String descriptor = resolveMethodDescriptor(cpi.cpIndex());
+                        String methodName = resolveMethodName(cpi.cpIndex());
+                        int argCount = argCountFromDescriptor(descriptor);
+                        boolean isVoid = descriptor != null && descriptor.endsWith(")V");
+
+                        // args
+                        List<Expr> args = new ArrayList<>(argCount);
+                        for (int i = 0; i < argCount; i++) {
+                            args.add(0, stack.pop());
+                        }
+
+                        // owner (тип) из CpMethodref
+                        CpMethodref mr = resolveMethodref(cpi.cpIndex());
+
+                        String ownerInternal = cp.getClassName(mr.classIndex());
+                        String ownerSimple = simpleClassName(ownerInternal);
+
+                        // Представим статический вызов как expr "Owner.method(args...)"
+                        Expr target = new VarExpr(ownerSimple);
+
+                        CallExpr call = new CallExpr(target, methodName, List.copyOf(args));
+                        if (isVoid) {
+                            block.add(new ExprStmt(call));
+                        } else {
+                            stack.push(call);
+                        }
+                    }
+                    case GETFIELD -> {
+                        CpFieldref fr = (CpFieldref) cp.entry(cpi.cpIndex());
+                        CpClass owner = (CpClass) cp.entry(fr.classIndex());
+                        CpNameAndType nt = (CpNameAndType) cp.entry(fr.nameAndTypeIndex());
+
+                        String fieldName = cp.getUtf8(nt.nameIndex());
+
+                        Expr obj = stack.pop();
+                        stack.push(new FieldAccessExpr(obj, fieldName));
+                    }
+                    case PUTFIELD -> {
+                        CpFieldref fr = (CpFieldref) cp.entry(cpi.cpIndex());
+                        CpNameAndType nt = (CpNameAndType) cp.entry(fr.nameAndTypeIndex());
+                        String fieldName = cp.getUtf8(nt.nameIndex());
+
+                        Expr value = stack.pop();
+                        Expr obj = stack.pop();
+
+                        Expr lhs = new FieldAccessExpr(obj, fieldName);
+                        block.add(new AssignStmt(lhs, value));
                     }
                     default -> {
                         // остальные инструкции с cp пока игнорируем
@@ -268,37 +309,6 @@ public final class ExpressionBuilder {
         return stack;
     }
 
-    private String resolveMethodDescriptor(int cpIndex) {
-        if (cp == null) return null;
-        CpInfo e = cp.entry(cpIndex);
-        if (e instanceof CpMethodref mr) {
-            CpNameAndType nt = (CpNameAndType) cp.entry(mr.nameAndTypeIndex());
-            return cp.getUtf8(nt.descriptorIndex());
-        }
-        return null;
-    }
-
-    private int argCountFromDescriptor(String descriptor) {
-        if (descriptor == null) return 0;
-        try {
-            var params = DescriptorUtils.parseParameterTypes(descriptor);
-            return params.size();
-        } catch (IllegalArgumentException e) {
-            return 0;
-        }
-    }
-
-    private String resolveMethodName(int cpIndex) {
-        if (cp == null) return "method";
-
-        CpInfo e = cp.entry(cpIndex);
-        if (e instanceof CpMethodref mr) {
-            CpNameAndType nt = (CpNameAndType) cp.entry(mr.nameAndTypeIndex());
-            return cp.getUtf8(nt.nameIndex());
-        }
-        return "method";
-    }
-
     private Expr makeStaticFieldExpr(int cpIndex) {
         if (cp == null) return null;
         CpInfo e = cp.entry(cpIndex);
@@ -324,5 +334,63 @@ public final class ExpressionBuilder {
             return internalName.substring(slash + 1);
         }
         return internalName.replace('/', '.');
+    }
+
+    // Возвращает Methodref / InterfaceMethodref из cp
+
+    private CpMethodref resolveMethodref(int cpIndex) {
+        CpInfo info = cp.entry(cpIndex);
+        if (info instanceof CpMethodref mr) {
+            return mr;
+        }
+        if (info instanceof CpInterfaceMethodref imr) {
+            // если есть интерфейсные вызовы
+            // TODO: Methodref создает ClassFileReader, который прокидывает динамический tag
+            //  поэтому пропишем константой 10, чтобы компилятор не ругался
+            return new CpMethodref(10, imr.classIndex(), imr.nameAndTypeIndex());
+        }
+        return null;
+    }
+
+    private String resolveMethodDescriptor(int cpIndex) {
+        CpMethodref mr = resolveMethodref(cpIndex);
+        if (mr == null) return null;
+        CpNameAndType nt = (CpNameAndType) cp.entry(mr.nameAndTypeIndex());
+        return cp.getUtf8(nt.descriptorIndex());
+    }
+
+    private String resolveMethodName(int cpIndex) {
+        CpMethodref mr = resolveMethodref(cpIndex);
+        if (mr == null) return null;
+        CpNameAndType nt = (CpNameAndType) cp.entry(mr.nameAndTypeIndex());
+        return cp.getUtf8(nt.nameIndex());
+    }
+
+    // Определяем количество аргументов по дескриптору, типа (II)I -> 2.
+    // Очень простой парсер: только примитивы и ссылочные типы.
+    private int argCountFromDescriptor(String descriptor) {
+        if (descriptor == null || !descriptor.startsWith("(")) return 0;
+        int i = 1;
+        int count = 0;
+        while (i < descriptor.length()) {
+            char c = descriptor.charAt(i);
+            if (c == ')') break;
+
+            if (c == 'L') {
+                // объектный тип Ljava/lang/String;
+                int semi = descriptor.indexOf(';', i);
+                if (semi < 0) break;
+                i = semi + 1;
+                count++;
+            } else if (c == '[') {
+                // массивы игнорируем, но считаем как часть типа
+                i++;
+            } else {
+                // примитивный тип I/J/F/D/Z/B/C/S
+                count++;
+                i++;
+            }
+        }
+        return count;
     }
 }
