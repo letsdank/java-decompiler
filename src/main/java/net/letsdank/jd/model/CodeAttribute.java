@@ -9,5 +9,7 @@ package net.letsdank.jd.model;
  * @param maxLocals
  * @param code Байткод
  */
-public record CodeAttribute(String name, int maxStack, int maxLocals, byte[] code) implements AttributeInfo {
+public record CodeAttribute(String name, int maxStack, int maxLocals, byte[] code,
+                            LineNumberTableAttribute lineNumberTable,
+                            LocalVariableTableAttribute localVariableAttribute) implements AttributeInfo {
 }

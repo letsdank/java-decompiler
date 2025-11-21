@@ -6,6 +6,8 @@ import net.letsdank.jd.model.cp.*;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Читает минимальный заголовок .class-файла.
@@ -235,14 +237,36 @@ public final class ClassFileReader {
                 in.readU2(); // catch_type
             }
 
+            LineNumberTableAttribute lnt = null;
+            LocalVariableTableAttribute lvt = null;
+
             // attributes внутри Code
             int codeAttrsCount = in.readU2();
             for (int i = 0; i < codeAttrsCount; i++) {
-                // пока просто читаем и выбрасываем
-                readSingleAttribute(in, cp);
+                int subNameIndex = in.readU2();
+                long subLen = in.readU4();
+                String subName = cp.getUtf8(subNameIndex);
+
+                if ("LineNumberTable".equals(subName)) {
+                    int len = in.readU2();
+                    List<LineNumberTableAttribute.Entry> entries = new ArrayList<>();
+                    for (int j = 0; j < len; j++) {
+                        int startPc = in.readU2();
+                        int line = in.readU2();
+                        entries.add(new LineNumberTableAttribute.Entry(startPc, line));
+                    }
+                    lnt = new LineNumberTableAttribute(entries);
+                } else if ("LocalVariableTable".equals(subName)) {
+                    lvt = readLocalVariableTable(in, cp, subLen);
+                } else {
+                    // просто пропускаем неизвестные вложенные атрибуты
+                    for (long k = 0; k < subLen; k++) {
+                        in.readU1();
+                    }
+                }
             }
 
-            return new CodeAttribute(name, maxStack, maxLocals, code);
+            return new CodeAttribute(name, maxStack, maxLocals, code, lnt, lvt);
         } else {
             // Пропускаем тело атрибута
             byte[] data = new byte[(int) length];
@@ -251,5 +275,20 @@ public final class ClassFileReader {
             }
             return new RawAttribute(name, data);
         }
+    }
+
+    private LocalVariableTableAttribute readLocalVariableTable(ClassFileInput in, ConstantPool cp, long attrLength)
+            throws IOException {
+        int len = in.readU2();
+        List<LocalVariableTableAttribute.Entry> entries = new ArrayList<>();
+        for (int i = 0; i < len; i++) {
+            int startPc = in.readU2();
+            int length = in.readU2();
+            int nameIndex = in.readU2();
+            int descIndex = in.readU2();
+            int index = in.readU2();
+            entries.add(new LocalVariableTableAttribute.Entry(startPc, length, nameIndex, descIndex, index));
+        }
+        return new LocalVariableTableAttribute(entries);
     }
 }
