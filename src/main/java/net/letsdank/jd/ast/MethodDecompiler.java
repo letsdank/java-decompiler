@@ -70,37 +70,6 @@ public final class MethodDecompiler {
     }
 
     /**
-     * Ищем первый блок, который заканчивается условным JumpInsn,
-     * и строим Expr для условия.
-     */
-    private Expr findConditionExpr(ControlFlowGraph cfg, LocalNameProvider localNames, ConstantPool cp) {
-        List<BasicBlock> blocks = cfg.blocks();
-        if (blocks.isEmpty()) return null;
-
-        BasicBlock condBlock = null;
-        JumpInsn condJump = null;
-
-        for (BasicBlock bb : blocks) {
-            var insns = bb.instructions();
-            if (insns.isEmpty()) continue;
-            Insn last = insns.getLast();
-            if (last instanceof JumpInsn j && JDUtils.isConditional(j.opcode())) {
-                condBlock = bb;
-                condJump = j;
-                break;
-            }
-        }
-        if (condBlock == null || condJump == null) return null;
-
-        // Стек до перехода
-        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp);
-        var condInsns = condBlock.instructions();
-        Deque<Expr> stackBefore = exprBuilder.simulateStackBeforeBranch(condInsns);
-
-        return buildConditionExpr(condJump, stackBefore);
-    }
-
-    /**
      * Строим Expr для условия из типа JumpInsn и стека перед ним.
      * Поддерживаем только пару случаев, достаточных для abs(int):
      * - IFGE x >= 0
@@ -112,25 +81,64 @@ public final class MethodDecompiler {
         Deque<Expr> stack = new ArrayDeque<>(stackBefore);
 
         switch (op) {
-            case IFGE -> {
+            // --- унарные сравнения с нулем ---
+            case IFEQ -> {
                 Expr x = stack.pop();
-                return new BinaryExpr(">=", x, new IntConstExpr(0));
+                return new BinaryExpr("==", x, new IntConstExpr(0));
+            }
+            case IFNE -> {
+                Expr x = stack.pop();
+                return new BinaryExpr("!=", x, new IntConstExpr(0));
             }
             case IFLT -> {
                 Expr x = stack.pop();
                 return new BinaryExpr("<", x, new IntConstExpr(0));
+            }
+            case IFGE -> {
+                Expr x = stack.pop();
+                return new BinaryExpr(">=", x, new IntConstExpr(0));
+            }
+            case IFGT -> {
+                Expr x = stack.pop();
+                return new BinaryExpr(">", x, new IntConstExpr(0));
+            }
+            case IFLE -> {
+                Expr x = stack.pop();
+                return new BinaryExpr("<=", x, new IntConstExpr(0));
+            }
+
+            // --- бинарные IF_ICMPxx ---
+            case IF_ICMPEQ -> {
+                Expr right = stack.pop();
+                Expr left = stack.pop();
+                return new BinaryExpr("==", left, right);
+            }
+            case IF_ICMPNE -> {
+                Expr right = stack.pop();
+                Expr left = stack.pop();
+                return new BinaryExpr("!=", left, right);
+            }
+            case IF_ICMPLT -> {
+                Expr right = stack.pop();
+                Expr left = stack.pop();
+                return new BinaryExpr("<", left, right);
             }
             case IF_ICMPGE -> {
                 Expr right = stack.pop();
                 Expr left = stack.pop();
                 return new BinaryExpr(">=", left, right);
             }
+            case IF_ICMPGT -> {
+                Expr right = stack.pop();
+                Expr left = stack.pop();
+                return new BinaryExpr(">", left, right);
+            }
             case IF_ICMPLE -> {
                 Expr right = stack.pop();
                 Expr left = stack.pop();
-                return new BinaryExpr("<", left, right);
+                return new BinaryExpr("<=", left, right);
             }
-            // Можно постепенно дописывать остальные сравнения
+
             default -> {
                 return null;
             }
@@ -271,11 +279,15 @@ public final class MethodDecompiler {
 
         // Для бинарных сравнений IF_ICMPxx
         switch (op) {
-            case IF_ICMPGE, IF_ICMPLT, IF_ICMPGT, IF_ICMPLE -> {
+            case IF_ICMPEQ, IF_ICMPNE,
+                 IF_ICMPGE, IF_ICMPLT, IF_ICMPGT, IF_ICMPLE -> {
+
                 Expr right = stack.pop();
                 Expr left = stack.pop();
                 // Семантика: если (cmp) -> прыжок. Нам нужно "иначе" (fallthrough).
                 return switch (op) {
+                    case IF_ICMPEQ -> new BinaryExpr("!=", left, right);                // !(left == right)
+                    case IF_ICMPNE -> new BinaryExpr("==", left, right);                // !(left != right)
                     case IF_ICMPGE -> new BinaryExpr("<", left, right);                 // !(left >= right)
                     case IF_ICMPLT -> new BinaryExpr(">=", left, right);                // !(left < right)
                     case IF_ICMPGT -> new BinaryExpr("<=", left, right);                // !(left > right)
@@ -284,9 +296,11 @@ public final class MethodDecompiler {
                 };
             }
             default -> {
-                // Для унарных IFxx x < 0 / x >= 0 и т.п.
+                // Для унарных IFxx x < 0 / x >= 0 / x == 0 / x != 0
                 Expr x = stack.pop();
                 return switch (op) {
+                    case IFEQ -> new BinaryExpr("!=", x, new IntConstExpr(0));  // !(x == 0)
+                    case IFNE -> new BinaryExpr("==", x, new IntConstExpr(0));  // !(x != 0)
                     case IFLT -> new BinaryExpr(">=", x, new IntConstExpr(0));  // !(x < 0)
                     case IFGE -> new BinaryExpr("<", x, new IntConstExpr(0));   // !(x >= 0)
                     case IFGT -> new BinaryExpr("<=", x, new IntConstExpr(0));  // !(x > 0)
@@ -306,8 +320,10 @@ public final class MethodDecompiler {
         Deque<Expr> stack = new ArrayDeque<>(stackBefore);
 
         // Сначала восстановим "сырой" левый/правый операнды для IF_ICMP*
-        if (op == Opcode.IF_ICMPGE || op == Opcode.IF_ICMPLT ||
+        if (op == Opcode.IF_ICMPEQ || op == Opcode.IF_ICMPNE ||
+                op == Opcode.IF_ICMPGE || op == Opcode.IF_ICMPLT ||
                 op == Opcode.IF_ICMPGT || op == Opcode.IF_ICMPLE) {
+
             Expr right = stack.pop();
             Expr left = stack.pop();
 
@@ -317,6 +333,8 @@ public final class MethodDecompiler {
                 // !(left < right) -> left >= right
                 // и т.д.
                 return switch (op) {
+                    case IF_ICMPEQ -> new BinaryExpr("!=", left, right);
+                    case IF_ICMPNE -> new BinaryExpr("==", left, right);
                     case IF_ICMPGE -> new BinaryExpr("<", left, right);
                     case IF_ICMPLT -> new BinaryExpr(">=", left, right);
                     case IF_ICMPGT -> new BinaryExpr("<=", left, right);
@@ -326,6 +344,8 @@ public final class MethodDecompiler {
             } else {
                 // body = target -> оставляем как есть
                 return switch (op) {
+                    case IF_ICMPEQ -> new BinaryExpr("==", left, right);
+                    case IF_ICMPNE -> new BinaryExpr("!=", left, right);
                     case IF_ICMPGE -> new BinaryExpr(">=", left, right);
                     case IF_ICMPLT -> new BinaryExpr("<", left, right);
                     case IF_ICMPGT -> new BinaryExpr(">", left, right);
