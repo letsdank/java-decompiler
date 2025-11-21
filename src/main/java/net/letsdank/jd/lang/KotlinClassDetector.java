@@ -1,6 +1,6 @@
 package net.letsdank.jd.lang;
 
-import net.letsdank.jd.model.ClassFile;
+import net.letsdank.jd.model.*;
 
 /**
  * Детектор Kotlin-классов.
@@ -17,16 +17,28 @@ public final class KotlinClassDetector {
     }
 
     public static boolean isKotlinClass(ClassFile cf) {
+        // 1. Строгий способ: ищем @kotlin.Metadata в аннотациях класса
+        AttributeInfo[] attrs = cf.attributes();
+        if (attrs != null) {
+            for (AttributeInfo attr : attrs) {
+                if (attr instanceof RuntimeVisibleAnnotationsAttribute annsAttr) {
+                    for (AnnotationInfo ann : annsAttr.annotations()) {
+                        if ("Lkotlin/Metadata;".equals(ann.descriptor())) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Бэкап: по пулу констант (на случай, если кто-то создает ClassFile вручную без атрибутов)
+        ConstantPool cp = cf.constantPool();
+        if (cp.containsUtf8("Lkotlin/Metadata;") || cp.containsUtf8("kotlin/Metadata")) {
+            return true;
+        }
+
+        // 3. Самая грубая эвристика: имя класса оканчивается на Kt
         String fqn = cf.thisClassFqn();
-        if (fqn == null) return false;
-
-        // Простейшая эвристика: FooKt -> Kotlin-генерация top-level функций.
-        if (fqn.endsWith("Kt")) return true;
-
-        // TODO: когда появятся атрибуты у ClassFile:
-        //  1) найти RuntimeVisibleAnnotations
-        //  2) проверить наличие аннотации "Lkotlin/Metadata;"
-
-        return false;
+        return fqn != null && fqn.endsWith("Kt");
     }
 }

@@ -5,7 +5,7 @@ package net.letsdank.jd.model;
  */
 public record ClassFile(int minorVersion, int majorVersion, ConstantPool constantPool,
                         int accessFlags, int thisClassIndex, int superClassIndex, int[] interfaceIndices,
-                        FieldInfo[] fields, MethodInfo[] methods) {
+                        FieldInfo[] fields, MethodInfo[] methods, AttributeInfo[] attributes) {
     /**
      * Имя класса в виде "com/example/Foo" из constant pool
      */

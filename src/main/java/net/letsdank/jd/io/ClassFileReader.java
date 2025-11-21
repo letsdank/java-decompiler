@@ -3,6 +3,7 @@ package net.letsdank.jd.io;
 import net.letsdank.jd.model.*;
 import net.letsdank.jd.model.cp.*;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -38,11 +39,8 @@ public final class ClassFileReader {
             FieldInfo[] fields = readFields(in, cp);
             MethodInfo[] methods = readMethods(in, cp);
 
-            // Атрибуты класса пока проигнорируем (прочитаем и выкинем)
-            int attributesCount = in.readU2();
-            for (int i = 0; i < attributesCount; i++) {
-                readSingleAttribute(in, cp); // пока не сохраняем
-            }
+            // Атрибуты класса
+            AttributeInfo[] classAttributes = readAttributes(in, cp);
 
             return new ClassFile(
                     minor,
@@ -53,7 +51,8 @@ public final class ClassFileReader {
                     superClassIndex,
                     interfaces,
                     fields,
-                    methods
+                    methods,
+                    classAttributes
             );
         } catch (Exception e) {
             throw new RuntimeException(e);
@@ -267,6 +266,13 @@ public final class ClassFileReader {
             }
 
             return new CodeAttribute(name, maxStack, maxLocals, code, lnt, lvt);
+        } else if ("RuntimeVisibleAnnotations".equals(name)) {
+            // читаем bytes целиком и разбираем уже в отдельном потоке
+            byte[] data = new byte[(int) length];
+            for (int i = 0; i < length; i++) {
+                data[i] = (byte) in.readU1();
+            }
+            return readRuntimeVisibleAnnotationsAttribute(name, data, cp);
         } else {
             // Пропускаем тело атрибута
             byte[] data = new byte[(int) length];
@@ -290,5 +296,73 @@ public final class ClassFileReader {
             entries.add(new LocalVariableTableAttribute.Entry(startPc, length, nameIndex, descIndex, index));
         }
         return new LocalVariableTableAttribute(entries);
+    }
+
+    private RuntimeVisibleAnnotationsAttribute readRuntimeVisibleAnnotationsAttribute(String name, byte[] data, ConstantPool cp)
+            throws IOException {
+        try (ClassFileInput in = new ClassFileInput(new ByteArrayInputStream(data))) {
+            int numAnnotations = in.readU2();
+            AnnotationInfo[] annotations = new AnnotationInfo[numAnnotations];
+            for (int i = 0; i < numAnnotations; i++) {
+                annotations[i] = readAnnotationInfo(in, cp);
+            }
+            return new RuntimeVisibleAnnotationsAttribute(name, annotations);
+        } catch (Exception e) {
+            throw new IOException("Failed to parse RuntimeVisibleAnnotations", e);
+        }
+    }
+
+    private AnnotationInfo readAnnotationInfo(ClassFileInput in, ConstantPool cp) throws IOException {
+        int typeIndex = in.readU2();
+        String descriptor = cp.getUtf8(typeIndex);
+
+        int numElementValuePairs = in.readU2();
+        for (int i = 0; i < numElementValuePairs; i++) {
+            int elementNameIndex = in.readU2(); // элемент нам не интересен
+            skipElementValue(in);
+        }
+
+        return new AnnotationInfo(descriptor);
+    }
+
+    private void skipElementValue(ClassFileInput in) throws IOException {
+        int tag = in.readU1();
+        switch (tag) {
+            case 'B', 'C', 'D', 'F', 'I', 'J', 'S', 'Z', 's' -> {
+                // const value_index
+                in.readU2();
+            }
+            case 'e' -> {
+                // enum_const_value: type_name_index, const_name_index
+                in.readU2();
+                in.readU2();
+            }
+            case 'c' -> {
+                // class_info_index
+                in.readU2();
+            }
+            case '@' -> {
+                // nested annotation
+                skipAnnotation(in);
+            }
+            case '[' -> {
+                int numValues = in.readU2();
+                for (int i = 0; i < numValues; i++) {
+                    skipElementValue(in);
+                }
+            }
+            default -> throw new IOException("Unknown element_value tag: " + (char) tag);
+        }
+    }
+
+    private void skipAnnotation(ClassFileInput in) throws IOException {
+        // type_index уже будет прочитан в readAnnotationInfo, но здесь
+        // это используется только для вложенных аннотаций.
+        int typeIndex = in.readU2();
+        int numElementValuePairs = in.readU2();
+        for (int i = 0; i < numElementValuePairs; i++) {
+            int elementNameIndex = in.readU2();
+            skipElementValue(in);
+        }
     }
 }
