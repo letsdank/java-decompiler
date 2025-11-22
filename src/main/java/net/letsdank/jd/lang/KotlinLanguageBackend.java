@@ -97,28 +97,66 @@ public final class KotlinLanguageBackend implements LanguageBackend {
             out.append("package ").append(pkg).append("\n\n");
         }
 
+        // Companion: SampleService$Companion -> class SampleService { companion object { ... } }
         boolean isCompanionLike = simpleName.endsWith("$Companion");
-
-        if(isCompanionLike) {
-            // Пример: simpleName = "SampleService$Companion"
-            String owner = simpleName.substring(0,simpleName.length() - "$Companion".length());
+        if (isCompanionLike) {
+            String owner = simpleName.substring(0, simpleName.length() - "$Companion".length());
 
             out.append("class ").append(owner).append(" {\n\n");
             out.append("    companion owner {\n\n");
 
-            for(MethodInfo method:cf.methods()){
-                if(shouldSkipKotlinSynthMethod(cf,method))continue;
-                MethodAst ast = decompiler.decompile(method,cf);
-                String methodText = printer.printMethod(cf,method,ast);
+            for (MethodInfo method : cf.methods()) {
+                if (shouldSkipKotlinSynthMethod(cf, method)) continue;
+                MethodAst ast = decompiler.decompile(method, cf);
+                String methodText = printer.printMethod(cf, method, ast);
                 // методы компаньона - на один уровень глубже
                 out.append(indent(indent(methodText))).append("\n\n");
             }
 
             out.append("    }\n");
             out.append("}\n");
-        } else {
-            // Обычный класс
-            out.append("class ").append(simpleName).append(" {\n\n");
+            return out.toString();
+        }
+
+        // Не companion: определяем вид класса
+        boolean isEnum = MetadataFlagsKt.isEnumClass(kmClass);
+        boolean isObject = MetadataFlagsKt.isObjectClass(kmClass);
+        boolean isValue = MetadataFlagsKt.isValueClass(kmClass);
+        boolean isData = MetadataFlagsKt.isDataClass(kmClass);
+        boolean isSealed = MetadataFlagsKt.isSealedClass(kmClass);
+
+        if (isEnum) {
+            // enum class
+            out.append("enum class ").append(simpleName).append(" {\n");
+
+            // enum entries (CONSTANT1, CONSTANT2, ...)
+            List<String> entries = MetadataFlagsKt.enumEntries(kmClass);
+            if (!entries.isEmpty()) {
+                for (int i = 0; i < entries.size(); i++) {
+                    out.append("    ").append(entries.get(i));
+                    if (i + 1 < entries.size()) {
+                        out.append(",");
+                    }
+                    out.append("\n");
+                }
+                out.append("\n");
+            }
+
+            // методы enum-а
+            for (MethodInfo method : cf.methods()) {
+                if (shouldSkipKotlinSynthMethod(cf, method)) continue;
+                MethodAst ast = decompiler.decompile(method, cf);
+                String methodText = printer.printMethod(cf, method, ast);
+                out.append(indent(methodText)).append("\n\n");
+            }
+
+            out.append("}\n");
+            return out.toString();
+        }
+
+        if (isObject) {
+            // object Foo { ... }
+            out.append("object ").append(simpleName).append(" {\n\n");
 
             for (MethodInfo method : cf.methods()) {
                 if (shouldSkipKotlinSynthMethod(cf, method)) continue;
@@ -128,8 +166,35 @@ public final class KotlinLanguageBackend implements LanguageBackend {
             }
 
             out.append("}\n");
+            return out.toString();
         }
 
+        // Обычный class / data / sealed / value
+
+        StringBuilder header = new StringBuilder();
+
+        if (isSealed) {
+            header.append("sealed ");
+        }
+        if (isData) {
+            header.append("data ");
+        }
+        if (isValue) {
+            header.append("value ");
+        }
+
+        header.append("class ");
+
+        out.append(header).append(simpleName).append(" {\n\n");
+
+        for (MethodInfo method : cf.methods()) {
+            if (shouldSkipKotlinSynthMethod(cf, method)) continue;
+            MethodAst ast = decompiler.decompile(method, cf);
+            String methodText = printer.printMethod(cf, method, ast);
+            out.append(indent(methodText)).append("\n\n");
+        }
+
+        out.append("}\n");
         return out.toString();
     }
 

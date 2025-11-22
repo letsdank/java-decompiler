@@ -101,13 +101,28 @@ public final class KotlinTypeUtils {
         }
 
         // Базовое имя (класс/alias/параметр типа)
-        String base = "any";
+        String base = "Any";
 
         KmClassifier classifier = actual.getClassifier();
+        boolean isFunctionType = false;
+        List<KmTypeProjection> functionArgs = null;
+        String functionInternalName = null;
+
+        // 1. Определяем базовое имя + проверяем, не function ли это
         if (classifier instanceof KmClassifier.Class cls) {
-            String internalName = cls.getName(); // например, "kotlin/Int" или "java/lang/String"
-            String fqn = internalName.replace('/', '.');
-            base = toKotlinType(fqn);
+            functionInternalName = cls.getName(); // internal name, например "kotlin/Function2"
+            String fqn = functionInternalName.replace('/', '.');
+
+            // Проверяем, что это функциональный тип
+            if (functionInternalName.startsWith("kotlin/Function") ||
+                    functionInternalName.startsWith("kotlin/reflect/KFunction") ||
+                    functionInternalName.startsWith("kotlin/reflect/KSuspendFunction")) {
+                isFunctionType = true;
+                functionArgs = actual.getArguments();
+                // base пока не заполняем, для этого логика вынесена ниже отдельно
+            } else {
+                base = toKotlinType(fqn);
+            }
         } else if (classifier instanceof KmClassifier.TypeAlias alias) {
             String internalName = alias.getName();
             String fqn = internalName.replace('/', '.');
@@ -117,8 +132,42 @@ public final class KotlinTypeUtils {
             base = "T" + tp.getId();
         }
 
-        // Аргументы типа: MutableList<out String?>, Map<in K, out V>, ...
-        if (!actual.getArguments().isEmpty()) {
+        // 2. Если это function type - печатаем как (A, B) -> R
+        if (isFunctionType && functionArgs != null && !functionArgs.isEmpty()) {
+            List<String> argTypes = new ArrayList<>();
+
+            for (KmTypeProjection proj : functionArgs) {
+                if (proj.getType() == null) {
+                    argTypes.add("*");
+                } else {
+                    argTypes.add(kmTypeToKotlin(proj.getType()));
+                }
+            }
+
+            String functionText;
+            if (argTypes.isEmpty()) {
+                functionText = "() -> Unit";
+            } else if (argTypes.size() == 1) {
+                // () -> R
+                functionText = "() -> " + argTypes.getFirst();
+            } else {
+                String returnType = argTypes.getLast();
+                List<String> params = argTypes.subList(0, argTypes.size() - 1);
+
+                StringBuilder paramsSb = new StringBuilder();
+                paramsSb.append("(");
+                for (int i = 0; i < params.size(); i++) {
+                    if (i > 0) paramsSb.append(", ");
+                    paramsSb.append(params.get(i));
+                }
+                paramsSb.append(")");
+
+                functionText = paramsSb + " -> " + returnType;
+            }
+
+            base = functionText;
+        } else if (!actual.getArguments().isEmpty()) {
+            // 3. Обычный generic-класс: List<out String?>, Map<in K, out V>, ...
             StringBuilder sb = new StringBuilder();
             sb.append(base).append("<");
             List<KmTypeProjection> args = actual.getArguments();

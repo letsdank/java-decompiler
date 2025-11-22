@@ -16,21 +16,8 @@ import kotlin.metadata.*
 fun isDataClass(kmClass: KmClass): Boolean =
     kmClass.isData
 
-fun isEnumClass(kmClass: KmClass): Boolean =
-    kmClass.kind == ClassKind.ENUM_CLASS
-
-fun isObjectClass(kmClass: KmClass): Boolean =
-    kmClass.kind == ClassKind.OBJECT
-
-fun isCompanionObject(kmClass: KmClass): Boolean =
-    kmClass.kind == ClassKind.COMPANION_OBJECT
-
-// --- KmProperty ---
-
 fun isVarProperty(prop: KmProperty): Boolean =
     prop.isVar
-
-// --- KmType ---
 
 fun isNullable(type: KmType): Boolean =
     type.isNullable
@@ -40,3 +27,33 @@ fun isDefinitelyNotNull(type: KmType): Boolean =
 
 fun isSuspend(type: KmType): Boolean =
     type.isSuspend
+
+/** sealed class / sealed interface */
+fun isSealedClass(kmClass: KmClass): Boolean =
+    kmClass.modality == Modality.SEALED
+
+/** enum class */
+fun isEnumClass(kmClass: KmClass): Boolean =
+    kmClass.kind == ClassKind.ENUM_CLASS
+
+/** object Foo */
+fun isObjectClass(kmClass: KmClass): Boolean =
+    kmClass.kind == ClassKind.OBJECT
+
+/** companion object Foo.Companion */
+fun isCompanionObjectClass(kmClass: KmClass): Boolean =
+    kmClass.kind == ClassKind.COMPANION_OBJECT
+
+/** value class */
+fun isValueClass(kmClass: KmClass): Boolean =
+    kmClass.isValue
+
+fun classKind(kmClass: KmClass): ClassKind =
+    kmClass.kind
+
+fun enumEntries(kmClass: KmClass): List<String> =
+    kmClass.enumEntries
+
+/** sealed subclasses (FQ-имена наследников sealed-класса) */
+fun sealedSubclasses(kmClass: KmClass): List<String> =
+    kmClass.sealedSubclasses
