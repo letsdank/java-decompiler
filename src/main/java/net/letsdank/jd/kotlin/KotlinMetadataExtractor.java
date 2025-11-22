@@ -1,10 +1,7 @@
 package net.letsdank.jd.kotlin;
 
 import kotlin.Metadata;
-import kotlin.metadata.KmClass;
-import kotlin.metadata.KmFunction;
-import kotlin.metadata.KmPackage;
-import kotlin.metadata.KmProperty;
+import kotlin.metadata.*;
 import kotlin.metadata.jvm.KotlinClassMetadata;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.annotation.AnnotationInfo;
@@ -175,7 +172,15 @@ public final class KotlinMetadataExtractor {
             }
         };
 
-        return KotlinClassMetadata.Companion.readLenient(metadata);
+        try {
+            return KotlinClassMetadata.Companion.readLenient(metadata);
+        } catch (InconsistentKotlinMetadataException e) {
+            // Метаданные битые / неподдерживаемые - просто не используем их.
+            return null;
+        } catch (Exception e){
+            // На всякий случай - любые другие проблемы тоже не должны ронять GUI
+            return null;
+        }
     }
 
     public static void printClassSummary(ClassFile cf, Appendable out) throws IOException {
