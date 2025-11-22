@@ -5,9 +5,11 @@ import kotlin.metadata.KmPackage;
 import kotlin.metadata.KmProperty;
 import kotlin.metadata.jvm.KotlinClassMetadata;
 import net.letsdank.jd.ast.KotlinPrettyPrinter;
+import net.letsdank.jd.ast.KotlinTypeUtils;
 import net.letsdank.jd.ast.MethodAst;
 import net.letsdank.jd.ast.MethodDecompiler;
 import net.letsdank.jd.kotlin.KotlinMetadataExtractor;
+import net.letsdank.jd.kotlin.MetadataFlagsKt;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
@@ -81,7 +83,7 @@ public final class KotlinLanguageBackend implements LanguageBackend {
 
         KmClass kmClass = classMeta.getKmClass();
 
-        // Вычисляем package по FQN class-файла
+        // Вычисляем package и простое имя по FQN class-файла
         String fqn = cf.thisClassFqn();
         String pkg = null;
         String simpleName = fqn;
@@ -95,23 +97,58 @@ public final class KotlinLanguageBackend implements LanguageBackend {
             out.append("package ").append(pkg).append("\n\n");
         }
 
-        out.append("class ").append(simpleName).append(" {\n\n");
+        boolean isCompanionLike = simpleName.endsWith("$Companion");
 
-        for (MethodInfo method : cf.methods()) {
-            if (shouldSkipKotlinSynthMethod(cf, method)) continue;
-            MethodAst ast = decompiler.decompile(method, cf);
-            String methodText = printer.printMethod(cf, method, ast);
-            out.append(indent(methodText)).append("\n\n");
+        if(isCompanionLike) {
+            // Пример: simpleName = "SampleService$Companion"
+            String owner = simpleName.substring(0,simpleName.length() - "$Companion".length());
+
+            out.append("class ").append(owner).append(" {\n\n");
+            out.append("    companion owner {\n\n");
+
+            for(MethodInfo method:cf.methods()){
+                if(shouldSkipKotlinSynthMethod(cf,method))continue;
+                MethodAst ast = decompiler.decompile(method,cf);
+                String methodText = printer.printMethod(cf,method,ast);
+                // методы компаньона - на один уровень глубже
+                out.append(indent(indent(methodText))).append("\n\n");
+            }
+
+            out.append("    }\n");
+            out.append("}\n");
+        } else {
+            // Обычный класс
+            out.append("class ").append(simpleName).append(" {\n\n");
+
+            for (MethodInfo method : cf.methods()) {
+                if (shouldSkipKotlinSynthMethod(cf, method)) continue;
+                MethodAst ast = decompiler.decompile(method, cf);
+                String methodText = printer.printMethod(cf, method, ast);
+                out.append(indent(methodText)).append("\n\n");
+            }
+
+            out.append("}\n");
         }
 
-        out.append("}\n");
         return out.toString();
     }
 
     private String tryDecompileDataClass(ClassFile cf, MethodDecompiler decompiler, KotlinClassMetadata.Class classMeta) {
         KmClass km = classMeta.getKmClass();
 
-        // Вычисляем имя класса
+        // 1. Проверяем, что это действительно data class
+        if (!MetadataFlagsKt.isDataClass(km)) {
+            return null;
+        }
+
+        // 2. Собираем свойства primary-конструктора
+        List<KmProperty> properties = km.getProperties();
+        if (properties.isEmpty()) {
+            // На всякий случай: странный "data class" без свойств - отдадим обработку дальше
+            return null;
+        }
+
+        // 3. Вычисляем имя класса
         String fqn = cf.thisClassFqn();
         String pkg = null;
         String simpleName = fqn;
@@ -119,12 +156,6 @@ public final class KotlinLanguageBackend implements LanguageBackend {
         if (lastDot >= 0) {
             pkg = fqn.substring(0, lastDot);
             simpleName = fqn.substring(lastDot + 1);
-        }
-
-        // Собираем свойства
-        List<KmProperty> properties = km.getProperties();
-        if (properties.isEmpty()) {
-            return null; // Не data class - пусть обрабатывает fallback
         }
 
         StringBuilder out = new StringBuilder();
@@ -140,9 +171,19 @@ public final class KotlinLanguageBackend implements LanguageBackend {
         for (int i = 0; i < properties.size(); i++) {
             KmProperty p = properties.get(i);
             String name = p.getName();
-            String type = p.getReturnType().toString(); // позже сделаем нормальный принтер типов
 
-            out.append("    val ").append(name).append(": ").append(type);
+            // val / var - по metadata
+            boolean isVar = MetadataFlagsKt.isVarProperty(p);
+            String varOrVal = isVar ? "var" : "val";
+
+            // Красивый Kotlin-тип из KmType
+            String type = KotlinTypeUtils.kmTypeToKotlin(p.getReturnType());
+
+            out.append("    ")
+                    .append(varOrVal).append(" ")
+                    .append(name).append(": ")
+                    .append(type);
+
             if (i + 1 < properties.size()) {
                 out.append(",");
             }

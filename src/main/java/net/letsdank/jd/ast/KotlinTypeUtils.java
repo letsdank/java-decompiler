@@ -1,5 +1,11 @@
 package net.letsdank.jd.ast;
 
+import kotlin.metadata.KmClassifier;
+import kotlin.metadata.KmType;
+import kotlin.metadata.KmTypeProjection;
+import kotlin.metadata.KmVariance;
+import net.letsdank.jd.kotlin.MetadataFlagsKt;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -68,5 +74,83 @@ public final class KotlinTypeUtils {
         }
 
         return t;
+    }
+
+    /**
+     * Преобразование KmType (из kotlin-metadata) в строку Kotlin-типа.
+     * <p>
+     * Поддерживает:
+     * - обычные классы (kotlin.Int -> Int, java.lang.String -> String и т.п.)
+     * - дженерики: List<String>, Map<String, Int>
+     * - nullable: T?
+     * - проекции: in / out / *
+     * <p>
+     * Это отдельный слой над уже существующим toKotlinType(String),
+     * который мапит FQN вида "kotlin.Int" -> "Int".
+     */
+    public static String kmTypeToKotlin(KmType type) {
+        if (type == null) {
+            return "Unit"; // безопасный fallback
+        }
+
+        KmType actual = type;
+
+        // Если есть сокращение типа (typealias) - работаем с аббревиатурой
+        if (actual.getAbbreviatedType() != null) {
+            actual = actual.getAbbreviatedType();
+        }
+
+        // Базовое имя (класс/alias/параметр типа)
+        String base = "any";
+
+        KmClassifier classifier = actual.getClassifier();
+        if (classifier instanceof KmClassifier.Class cls) {
+            String internalName = cls.getName(); // например, "kotlin/Int" или "java/lang/String"
+            String fqn = internalName.replace('/', '.');
+            base = toKotlinType(fqn);
+        } else if (classifier instanceof KmClassifier.TypeAlias alias) {
+            String internalName = alias.getName();
+            String fqn = internalName.replace('/', '.');
+            base = toKotlinType(fqn);
+        } else if (classifier instanceof KmClassifier.TypeParameter tp) {
+            // Для простоты: T0, T1, ...
+            base = "T" + tp.getId();
+        }
+
+        // Аргументы типа: MutableList<out String?>, Map<in K, out V>, ...
+        if (!actual.getArguments().isEmpty()) {
+            StringBuilder sb = new StringBuilder();
+            sb.append(base).append("<");
+            List<KmTypeProjection> args = actual.getArguments();
+            for (int i = 0; i < args.size(); i++) {
+                if (i > 0) sb.append(", ");
+                KmTypeProjection proj = args.get(i);
+                if (proj.getType() == null) {
+                    sb.append("*");
+                } else {
+                    KmVariance variance = proj.getVariance();
+                    if (variance == KmVariance.IN) {
+                        sb.append("in ");
+                    } else if (variance == KmVariance.OUT) {
+                        sb.append("out ");
+                    }
+                    sb.append(kmTypeToKotlin(proj.getType()));
+                }
+            }
+            sb.append(">");
+            base = sb.toString();
+        }
+
+        // Nullable / definitely-non-null
+        if (MetadataFlagsKt.isNullable(actual) && !MetadataFlagsKt.isDefinitelyNotNull(actual)) {
+            base = base + "?";
+        }
+
+        // Suspend-тип
+        if (MetadataFlagsKt.isSuspend(actual)) {
+            base = "suspend " + base;
+        }
+
+        return base;
     }
 }
