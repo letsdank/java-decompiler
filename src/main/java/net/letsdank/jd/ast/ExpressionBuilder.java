@@ -191,6 +191,19 @@ public final class ExpressionBuilder {
                         String descriptor = resolveMethodDescriptor(cpi.cpIndex());
                         String methodName = resolveMethodName(cpi.cpIndex());
                         int argCount = argCountFromDescriptor(descriptor);
+
+                        // Спец-кейс: kotlin.jvm.internal.Intrinsics.checkNotNullParameter(...)
+                        CpMethodref mr = resolveMethodref(cpi.cpIndex());
+                        String ownerInternal = cp.getClassName(mr.classIndex());
+                        if ("kotlin/jvm/internal/Intrinsics".equals(ownerInternal) &&
+                                "checkNotNullParameter".equals(methodName)) {
+                            // Просто снимаем аргументы со стека и не добавляем statemnt
+                            for (int i = 0; i < argCount; i++) {
+                                stack.pop();
+                            }
+                            break;
+                        }
+
                         boolean isVoid = descriptor != null && descriptor.endsWith(")V");
 
                         // args
@@ -199,10 +212,6 @@ public final class ExpressionBuilder {
                             args.add(0, stack.pop());
                         }
 
-                        // owner (тип) из CpMethodref
-                        CpMethodref mr = resolveMethodref(cpi.cpIndex());
-
-                        String ownerInternal = cp.getClassName(mr.classIndex());
                         String ownerSimple = simpleClassName(ownerInternal);
 
                         // Представим статический вызов как expr "Owner.method(args...)"
