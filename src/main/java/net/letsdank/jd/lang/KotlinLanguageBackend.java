@@ -2,13 +2,17 @@ package net.letsdank.jd.lang;
 
 import kotlin.metadata.KmClass;
 import kotlin.metadata.KmPackage;
+import kotlin.metadata.KmProperty;
 import kotlin.metadata.jvm.KotlinClassMetadata;
 import net.letsdank.jd.ast.KotlinPrettyPrinter;
 import net.letsdank.jd.ast.MethodAst;
 import net.letsdank.jd.ast.MethodDecompiler;
 import net.letsdank.jd.kotlin.KotlinMetadataExtractor;
 import net.letsdank.jd.model.ClassFile;
+import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
+
+import java.util.List;
 
 /**
  * Бэкенд, который печатает методы в виде Kotlin-кода,
@@ -35,6 +39,8 @@ public final class KotlinLanguageBackend implements LanguageBackend {
             return decompileFileFacade(cf, methodDecompiler, fileFacadeMeta);
         } else if (metadata instanceof KotlinClassMetadata.Class classMeta) {
             // Обычный Kotlin-класс (в том числе data class)
+            String dataClassResult = tryDecompileDataClass(cf, methodDecompiler, classMeta);
+            if (dataClassResult != null) return dataClassResult;
             return decompileKotlinClass(cf, methodDecompiler, classMeta);
         } else {
             // Нет метаданных или какой-то другой вид - используем простой fallback
@@ -89,22 +95,62 @@ public final class KotlinLanguageBackend implements LanguageBackend {
             out.append("package ").append(pkg).append("\n\n");
         }
 
-        // TODO: позже можно использовать KmClass.isData (Attributes API) из Kotlin-кода.
-        //  Пока не добавляем 'data' автоматически, чтобы не тянуться к extension-свойства из Java.
-        boolean isData = false;
-
-        if (isData) {
-            out.append("data ");
-        }
         out.append("class ").append(simpleName).append(" {\n\n");
 
         for (MethodInfo method : cf.methods()) {
+            if (shouldSkipKotlinSynthMethod(cf, method)) continue;
             MethodAst ast = decompiler.decompile(method, cf);
             String methodText = printer.printMethod(cf, method, ast);
             out.append(indent(methodText)).append("\n\n");
         }
 
         out.append("}\n");
+        return out.toString();
+    }
+
+    private String tryDecompileDataClass(ClassFile cf, MethodDecompiler decompiler, KotlinClassMetadata.Class classMeta) {
+        KmClass km = classMeta.getKmClass();
+
+        // Вычисляем имя класса
+        String fqn = cf.thisClassFqn();
+        String pkg = null;
+        String simpleName = fqn;
+        int lastDot = fqn.lastIndexOf('.');
+        if (lastDot >= 0) {
+            pkg = fqn.substring(0, lastDot);
+            simpleName = fqn.substring(lastDot + 1);
+        }
+
+        // Собираем свойства
+        List<KmProperty> properties = km.getProperties();
+        if (properties.isEmpty()) {
+            return null; // Не data class - пусть обрабатывает fallback
+        }
+
+        StringBuilder out = new StringBuilder();
+
+        // Пакет
+        if (pkg != null && !pkg.isEmpty()) {
+            out.append("package ").append(pkg).append("\n\n");
+        }
+
+        // Заголовок data class
+        out.append("data class ").append(simpleName).append("(\n");
+
+        for (int i = 0; i < properties.size(); i++) {
+            KmProperty p = properties.get(i);
+            String name = p.getName();
+            String type = p.getReturnType().toString(); // позже сделаем нормальный принтер типов
+
+            out.append("    val ").append(name).append(": ").append(type);
+            if (i + 1 < properties.size()) {
+                out.append(",");
+            }
+            out.append("\n");
+        }
+
+        out.append(")\n");
+
         return out.toString();
     }
 
@@ -116,16 +162,77 @@ public final class KotlinLanguageBackend implements LanguageBackend {
         StringBuilder out = new StringBuilder();
         KotlinPrettyPrinter printer = new KotlinPrettyPrinter();
 
-        out.append("// decompiled Kotlin class (experimental)\n");
-        out.append("// ").append(cf.thisClassFqn()).append("\n\n");
+        String fqn = cf.thisClassFqn();
+        String pkg = null;
+        String simpleName = fqn;
+        int lastDot = fqn.lastIndexOf('.');
+        if (lastDot >= 0) {
+            pkg = fqn.substring(0, lastDot);
+            simpleName = fqn.substring(lastDot + 1);
+        }
+
+        if (pkg != null && !pkg.isEmpty()) {
+            out.append("package ").append(pkg).append("\n\n");
+        }
+
+        boolean isCompanion = simpleName.endsWith("$Companion");
+        boolean isFileFacadeLike = simpleName.endsWith("Kt");
+
+        if (isCompanion) {
+            String owner = simpleName.substring(0, simpleName.length() - "$Companion".length());
+            out.append("object ").append(owner).append(".Companion").append(" {\n\n");
+        } else if (!isFileFacadeLike) {
+            out.append("class ").append(simpleName).append(" {\n\n");
+        }
 
         for (MethodInfo method : cf.methods()) {
+            if (shouldSkipLowLevelMethod(cf, method)) continue;
+
             MethodAst ast = decompiler.decompile(method, cf);
             String methodText = printer.printMethod(cf, method, ast);
-            out.append(methodText).append("\n\n");
+            if (!isFileFacadeLike) {
+                out.append(indent(methodText)).append("\n\n");
+            } else {
+                out.append(methodText).append("\n\n");
+            }
+        }
+
+        if (!isFileFacadeLike) {
+            out.append("}\n");
         }
 
         return out.toString();
+    }
+
+    private boolean shouldSkipLowLevelMethod(ClassFile cf, MethodInfo method) {
+        ConstantPool cp = cf.constantPool();
+        String name = cp.getUtf8(method.nameIndex());
+
+        // Статический инициализатор - не показываем как функцию
+        if ("<clinit>".equals(name)) {
+            return true;
+        }
+
+        // Временный хак: не показываем copy$default - это чисто служебный метод data-классов
+        if ("copy$default".equals(name)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private boolean shouldSkipKotlinSynthMethod(ClassFile cf, MethodInfo method) {
+        ConstantPool cp = cf.constantPool();
+        String name = cp.getUtf8(method.nameIndex());
+
+        if ("<init>".equals(name)) return true;
+        if (name.startsWith("component")) return true;
+        if (name.equals("copy")) return true;
+        if (name.equals("copy$default")) return true;
+        if (name.equals("equals")) return true;
+        if (name.equals("hashCode")) return true;
+        if (name.equals("toString")) return true;
+        return false;
     }
 
     private static String indent(String text) {
