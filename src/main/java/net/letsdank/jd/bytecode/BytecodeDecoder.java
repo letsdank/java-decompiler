@@ -103,6 +103,18 @@ public final class BytecodeDecoder {
                     offset += 2;
                     insns.add(new IincInsn(start, opcode, index, delta));
                 }
+                case INVOKEDYNAMIC -> {
+                    // invokedynamic <cp_index:u2> <0:u1> <0:u1>
+                    if (offset + 3 >= code.length) {
+                        insns.add(new UnknownInsn(start, opByte, Arrays.copyOfRange(code, start, code.length)));
+                        return insns;
+                    }
+                    int hi = code[offset] & 0xFF;
+                    int lo = code[offset + 1] & 0xFF;
+                    int cpIndex = (hi << 8) | lo;
+                    offset += 4; // пропускаем два "reserved" байта (обычно 0,0)
+                    insns.add(new ConstantPoolInsn(start, opcode, cpIndex));
+                }
             }
         }
 

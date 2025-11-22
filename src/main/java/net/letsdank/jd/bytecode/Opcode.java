@@ -12,11 +12,11 @@ public enum Opcode {
     ILOAD_2(0x1C, "iload_2"),
     ILOAD_3(0x1D, "iload_3"),
 
-    ALOAD(0x19,"aload",OperandType.LOCAL_INDEX_U1),
-    ALOAD_0(0x2A,"aload_0"),
-    ALOAD_1(0x2B,"aload_1"),
-    ALOAD_2(0x2C,"aload_2"),
-    ALOAD_3(0x2D,"aload_3"),
+    ALOAD(0x19, "aload", OperandType.LOCAL_INDEX_U1),
+    ALOAD_0(0x2A, "aload_0"),
+    ALOAD_1(0x2B, "aload_1"),
+    ALOAD_2(0x2C, "aload_2"),
+    ALOAD_3(0x2D, "aload_3"),
 
     ISTORE(0x36, "istore", OperandType.LOCAL_INDEX_U1),
     ISTORE_0(0x3B, "istore_0"),
@@ -36,10 +36,12 @@ public enum Opcode {
     SIPUSH(0x11, "sipush", OperandType.SHORT_IMM),
 
     // ldc index (u1)
-    LDC(0x12,"ldc",OperandType.CONSTPOOL_U1),
+    LDC(0x12, "ldc", OperandType.CONSTPOOL_U1),
 
+    // --- арифметика ---
     IADD(0x60, "iadd"),
     INEG(0x74, "ineg"),
+    IMUL(0x68, "imul"),
 
     IINC(0x84, "iinc", OperandType.IINC),
 
@@ -61,19 +63,28 @@ public enum Opcode {
     // --- безусловные ---
     GOTO(0xA7, "goto", OperandType.BRANCH_S2),
 
-    // --- поля/методы (cp_index u2) ---
-    GETSTATIC(0xB2,"getstatic",OperandType.CONSTPOOL_U2),
-    PUTSTATIC(0xB3,"putstatic",OperandType.CONSTPOOL_U2),
-    GETFIELD(0xB4,"getfield",OperandType.CONSTPOOL_U2),
-    PUTFIELD(0xB5,"putfield",OperandType.CONSTPOOL_U2),
-
-    INVOKEVIRTUAL(0xB6,"invokevirtual",OperandType.CONSTPOOL_U2),
-    INVOKESPECIAL(0xB7,"invokespecial",OperandType.CONSTPOOL_U2),
-    INVOKESTATIC(0xB8,"invokestatic",OperandType.CONSTPOOL_U2),
-
     // --- возвраты ---
+    ARETURN(0xB0, "areturn"),
     IRETURN(0xAC, "ireturn"),
-    RETURN(0xB1, "return");
+    RETURN(0xB1, "return"),
+
+    // --- поля/методы (cp_index u2) ---,
+    GETSTATIC(0xB2, "getstatic", OperandType.CONSTPOOL_U2),
+    PUTSTATIC(0xB3, "putstatic", OperandType.CONSTPOOL_U2),
+    GETFIELD(0xB4, "getfield", OperandType.CONSTPOOL_U2),
+    PUTFIELD(0xB5, "putfield", OperandType.CONSTPOOL_U2),
+
+    // --- вызовы ---
+    INVOKEVIRTUAL(0xB6, "invokevirtual", OperandType.CONSTPOOL_U2),
+    INVOKESPECIAL(0xB7, "invokespecial", OperandType.CONSTPOOL_U2),
+    INVOKESTATIC(0xB8, "invokestatic", OperandType.CONSTPOOL_U2),
+    INVOKEINTERFACE(0xB9, "invokeinterface", OperandType.CONSTPOOL_U2),
+    INVOKEDYNAMIC(0xBA, "invokedynamic", OperandType.INVOKEDYNAMIC),
+
+    // --- создание объектов ---
+    NEW(0xBB, "new", OperandType.CONSTPOOL_U2),
+
+    ;
 
     private final int code;
     private final String mnemonic;

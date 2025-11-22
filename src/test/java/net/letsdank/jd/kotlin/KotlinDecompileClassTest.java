@@ -31,7 +31,7 @@ class KotlinDecompileClassTest {
             MethodDecompiler decompiler = new MethodDecompiler();
 
             String src = backend.decompileClass(cf, decompiler);
-            System.out.println("SampleService decompiled:\n" + src);
+            System.out.println("=== Decompiled SampleService ===\n" + src);
 
             // Проверяем общую форму
             assertTrue(src.contains("package net.letsdank.jd.fixtures"), "package should be present");

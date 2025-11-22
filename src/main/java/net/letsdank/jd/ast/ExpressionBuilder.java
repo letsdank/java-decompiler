@@ -44,6 +44,11 @@ public final class ExpressionBuilder {
                         Expr left = stack.pop();
                         stack.push(new BinaryExpr("+", left, right));
                     }
+                    case IMUL -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("*", left, right));
+                    }
                     case INEG -> {
                         Expr v = stack.pop();
                         stack.push(new UnaryExpr("-", v));
@@ -51,6 +56,10 @@ public final class ExpressionBuilder {
 
                     // возвраты
                     case IRETURN -> {
+                        Expr v = stack.pop();
+                        block.add(new ReturnStmt(v));
+                    }
+                    case ARETURN -> {
                         Expr v = stack.pop();
                         block.add(new ReturnStmt(v));
                     }
@@ -274,6 +283,11 @@ public final class ExpressionBuilder {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
                         stack.push(new BinaryExpr("+", left, right));
+                    }
+                    case IMUL -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("*", left, right));
                     }
                     case INEG -> {
                         Expr v = stack.pop();
