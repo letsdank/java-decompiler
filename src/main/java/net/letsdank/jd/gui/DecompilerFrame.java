@@ -14,13 +14,15 @@ import net.letsdank.jd.model.MethodInfo;
 import net.letsdank.jd.model.cp.*;
 
 import javax.swing.*;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeModel;
 import java.awt.*;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
+import java.io.*;
+import java.util.*;
 import java.util.List;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 
 /**
  * Простейшее GUI: слева дерево, справа панель с текстом
@@ -32,10 +34,18 @@ public final class DecompilerFrame extends JFrame {
     private final JTextArea javaArea;
     private final JTabbedPane tabbedPane;
 
+    private JMenu recentFilesMenu;
+    private final AppSettings settings;
+
     private LanguageBackend currentBackend = LanguageBackends.forLanguage(Language.JAVA);
+
+    private File currentFile; // .class или .jar
+    private boolean currentIsJar;
 
     public DecompilerFrame() {
         super("Java Decompiler");
+
+        this.settings = AppSettings.load();
 
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
@@ -51,11 +61,17 @@ public final class DecompilerFrame extends JFrame {
                 // Показать код конкретного метода
                 showMethodDetails(mNode.classFile(), mNode.method());
             } else if (node instanceof DefaultMutableTreeNode dtmn) {
-                // Для других узлов покажем общую информацию по классу,
-                // если в корне лежит ClassFile
-                Object rootObj = ((DefaultMutableTreeNode) tree.getModel().getRoot()).getUserObject();
-                if (rootObj instanceof ClassFile cf) {
+                Object userObject = dtmn.getUserObject();
+                if (userObject instanceof ClassFile cf) {
+                    // Если узел представляет ClassFile - покажем итог по классу
                     showClassSummary(cf);
+                } else {
+                    // Для других узлов покажем общую информацию по классу,
+                    // если в корне лежит ClassFile
+                    Object rootObj = ((DefaultMutableTreeNode) tree.getModel().getRoot()).getUserObject();
+                    if (rootObj instanceof ClassFile cfRoot) {
+                        showClassSummary(cfRoot);
+                    }
                 }
             }
         });
@@ -90,10 +106,26 @@ public final class DecompilerFrame extends JFrame {
         JMenuBar bar = new JMenuBar();
 
         JMenu fileMenu = new JMenu("File");
-        JMenuItem openItem = new JMenuItem("Open .class...");
-        openItem.addActionListener(e -> openClassFile());
 
-        fileMenu.add(openItem);
+        JMenuItem openClassItem = new JMenuItem("Open .class...");
+        openClassItem.addActionListener(e -> openClassFile());
+
+        JMenuItem openJarItem = new JMenuItem("Open .jar...");
+        openJarItem.addActionListener(e -> openJarFile());
+
+        JMenuItem reloadItem = new JMenuItem("Reload");
+        reloadItem.addActionListener(e -> reloadCurrentFile());
+
+        recentFilesMenu = new JMenu("Recent files");
+        rebuildRecentFilesMenu();
+
+        fileMenu.add(openClassItem);
+        fileMenu.add(openJarItem);
+        fileMenu.addSeparator();
+        fileMenu.add(reloadItem);
+        fileMenu.addSeparator();
+        fileMenu.add(recentFilesMenu);
+
         bar.add(fileMenu);
         return bar;
     }
@@ -101,22 +133,171 @@ public final class DecompilerFrame extends JFrame {
     private void openClassFile() {
         JFileChooser chooser = new JFileChooser();
         chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+        chooser.setFileFilter(new FileNameExtensionFilter("Class files (*.class)", "class"));
+
+        if (settings.lastDirectory != null && settings.lastDirectory.isDirectory()) {
+            chooser.setCurrentDirectory(settings.lastDirectory);
+        }
+
         int result = chooser.showOpenDialog(this);
         if (result != JFileChooser.APPROVE_OPTION) {
             return;
         }
 
         File file = chooser.getSelectedFile();
+        openClassFile(file);
+    }
+
+    private void openClassFile(File file) {
         try (FileInputStream in = new FileInputStream(file)) {
             ClassFileReader reader = new ClassFileReader();
             ClassFile cf = reader.read(in);
             // Автоопределение языка на основе class-файла
             currentBackend = LanguageBackends.autoDetect(cf);
+
+            currentFile = file;
+            currentIsJar = false;
+
+            settings.rememberFile(file);
+            settings.rememberLastDirectory(file.getParentFile());
+            settings.save();
+            rebuildRecentFilesMenu();
+
             showClassFile(file, cf);
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this, "Failed to read class file: " + ex.getMessage(),
                     "Error", JOptionPane.ERROR_MESSAGE);
             ex.printStackTrace(System.err);
+        }
+    }
+
+    private void openJarFile() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+        chooser.setFileFilter(new FileNameExtensionFilter("JAR files (*.jar)", "jar"));
+
+        if (settings.lastDirectory != null && settings.lastDirectory.isDirectory()) {
+            chooser.setCurrentDirectory(settings.lastDirectory);
+        }
+
+        int result = chooser.showOpenDialog(this);
+        if (result != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        File file = chooser.getSelectedFile();
+        openJarFile(file);
+    }
+
+    private void openJarFile(File jarFile) {
+        try (JarFile jar = new JarFile(jarFile)) {
+            ClassFileReader reander = new ClassFileReader();
+
+            DefaultMutableTreeNode root = new DefaultMutableTreeNode(jarFile.getName());
+            Map<String, DefaultMutableTreeNode> packageNodes = new HashMap<>();
+
+            Enumeration<JarEntry> entries = jar.entries();
+            boolean backendInitialized = false;
+
+            while (entries.hasMoreElements()) {
+                JarEntry entry = entries.nextElement();
+                if (entry.isDirectory()) continue;
+                String name = entry.getName();
+                if (!name.endsWith(".class")) continue;
+
+                try (InputStream in = jar.getInputStream(entry)) {
+                    ClassFile cf = reander.read(in);
+                    if (!backendInitialized) {
+                        currentBackend = LanguageBackends.autoDetect(cf);
+                        backendInitialized = true;
+                    }
+
+                    String fqcn = cf.thisClassFqn().replace('/', '.');
+                    int lastDot = fqcn.lastIndexOf('.');
+                    String pkg = (lastDot == -1) ? "" : fqcn.substring(0, lastDot);
+                    String simpleName = (lastDot == -1) ? fqcn : fqcn.substring(lastDot + 1);
+
+                    DefaultMutableTreeNode pkgNode = root;
+                    if (!pkg.isEmpty()) {
+                        pkgNode = packageNodes.computeIfAbsent(pkg, p -> {
+                            DefaultMutableTreeNode node = new DefaultMutableTreeNode(p);
+                            root.add(node);
+                            return node;
+                        });
+                    }
+
+                    DefaultMutableTreeNode classNode = new DefaultMutableTreeNode(cf) {
+                        @Override
+                        public String toString() {
+                            return simpleName;
+                        }
+                    };
+                    pkgNode.add(classNode);
+
+                    for (MethodInfo m : cf.methods()) {
+                        classNode.add(new MethodTreeNode(cf, m));
+                    }
+                }
+            }
+
+            tree.setModel(new DefaultTreeModel(root));
+
+            bytecodeArea.setText("Opened JAR: " + jarFile.getAbsolutePath()
+                    + "\nSelect a class or method in the tree.");
+            bytecodeArea.setCaretPosition(0);
+
+            javaArea.setText("");
+            javaArea.setCaretPosition(0);
+
+            currentFile = jarFile;
+            currentIsJar = true;
+
+            settings.rememberFile(jarFile);
+            settings.rememberLastDirectory(jarFile.getParentFile());
+            settings.save();
+            rebuildRecentFilesMenu();
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to read jar file: " + ex.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
+            ex.printStackTrace(System.err);
+        }
+    }
+
+    private void reloadCurrentFile() {
+        if (currentFile == null) return;
+        if (!currentFile.exists()) {
+            JOptionPane.showMessageDialog(this, "File no longer exists:\n" + currentFile,
+                    "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        if (currentIsJar) openJarFile(currentFile);
+        else openClassFile(currentFile);
+    }
+
+    private void rebuildRecentFilesMenu() {
+        if (recentFilesMenu == null) return;
+
+        recentFilesMenu.removeAll();
+
+        List<File> files = settings.getRecentFiles();
+        if (files.isEmpty()) {
+            JMenuItem empty = new JMenuItem("(empty)");
+            empty.setEnabled(false);
+            recentFilesMenu.add(empty);
+            return;
+        }
+
+        for (File f : files) {
+            JMenuItem item = new JMenuItem(f.getAbsolutePath());
+            item.addActionListener(e -> {
+                if (f.getName().toLowerCase().endsWith(".jar")) {
+                    openJarFile(f);
+                } else {
+                    openClassFile(f);
+                }
+            });
+            recentFilesMenu.add(item);
         }
     }
 
@@ -288,6 +469,94 @@ public final class DecompilerFrame extends JFrame {
     private static void expandAll(JTree tree) {
         for (int i = 0; i < tree.getRowCount(); i++) {
             tree.expandRow(i);
+        }
+    }
+
+    private static final class AppSettings {
+        private static final String FILE_NAME = ".mini-jd-gui.properties";
+
+        private final List<File> recentFiles = new ArrayList<>();
+        private File lastDirectory;
+
+        static AppSettings load() {
+            AppSettings s = new AppSettings();
+            File file = getSettingsFile();
+            if (!file.exists()) return s;
+
+            Properties p = new Properties();
+            try (FileInputStream in = new FileInputStream(file)) {
+                p.load(in);
+            } catch (IOException e) {
+                // Битый конфиг игнорируем, стартуем с пустыми настройками
+                return s;
+            }
+
+            String lastDirStr = p.getProperty("lastDirectory");
+            if (lastDirStr != null && !lastDirStr.isBlank()) {
+                File dir = new File(lastDirStr);
+                if (dir.isDirectory()) {
+                    s.lastDirectory = dir;
+                }
+            }
+
+            for (int i = 0; ; i++) {
+                String path = p.getProperty("recent." + i);
+                if (path == null) break;
+                File f = new File(path);
+                if (f.exists()) {
+                    s.recentFiles.add(f);
+                }
+            }
+
+            return s;
+        }
+
+        void save() {
+            File file = getSettingsFile();
+            File parent = file.getParentFile();
+            if (parent != null && !parent.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                parent.mkdirs();
+            }
+
+            Properties p = new Properties();
+            if (lastDirectory != null) {
+                p.setProperty("lastDirectory", lastDirectory.getAbsolutePath());
+            }
+
+            int idx = 0;
+            for (File f : recentFiles) {
+                p.setProperty("recent." + idx++, f.getAbsolutePath());
+            }
+
+            try (FileOutputStream out = new FileOutputStream(file)) {
+                p.store(out, "Mini JD GUI settings");
+            } catch (IOException e) {
+                // настройки - не критично, можно молча игнорировать
+            }
+        }
+
+        List<File> getRecentFiles() {
+            return Collections.unmodifiableList(recentFiles);
+        }
+
+        void rememberFile(File file) {
+            recentFiles.removeIf(f -> f.equals(file));
+            recentFiles.addFirst(file);
+            while (recentFiles.size() > 10) {
+                recentFiles.removeLast();
+            }
+        }
+
+        void rememberLastDirectory(File dir) {
+            if (dir != null && dir.isDirectory()) {
+                lastDirectory = dir;
+            }
+        }
+
+        private static File getSettingsFile() {
+            String home = System.getProperty("user.home", ".");
+            return new File(home, FILE_NAME);
         }
     }
 }
