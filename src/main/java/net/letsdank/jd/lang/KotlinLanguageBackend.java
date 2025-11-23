@@ -9,11 +9,11 @@ import net.letsdank.jd.ast.KotlinTypeUtils;
 import net.letsdank.jd.ast.MethodAst;
 import net.letsdank.jd.ast.MethodDecompiler;
 import net.letsdank.jd.kotlin.KotlinMetadataExtractor;
+import net.letsdank.jd.kotlin.KotlinMetadataReader;
 import net.letsdank.jd.kotlin.KotlinPropertyRegistry;
 import net.letsdank.jd.kotlin.MetadataFlagsKt;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.ConstantPool;
-import net.letsdank.jd.model.FieldInfo;
 import net.letsdank.jd.model.MethodInfo;
 
 import java.util.ArrayList;
@@ -32,39 +32,12 @@ public final class KotlinLanguageBackend implements LanguageBackend {
     }
 
     @Override
-    public String decompileMethod(ClassFile cf, MethodInfo method, MethodAst ast) {
-        // Пытаемся вытащить Kotlin-метаданные для этого class-файла
-        KotlinClassMetadata metadata = KotlinMetadataExtractor.extractFromClassFile(cf);
+    public String decompileMethod(ClassFile cf, MethodInfo method, MethodAst ast){
+        Set<String> propertyNames = KotlinMetadataReader.readEffectivePropertyNames(cf);
 
-        Set<String> propertyNames = new HashSet<>();
-
-        if (metadata instanceof KotlinClassMetadata.Class classMeta) {
-            KmClass kmClass = classMeta.getKmClass();
-            for (KmProperty p : kmClass.getProperties()) {
-                propertyNames.add(p.getName());
-            }
-
-            // Регистрируем свойства этого класса в глобальном реестре
-            String ownerInternal = cf.thisClassInternalName();
-            KotlinPropertyRegistry.register(ownerInternal, propertyNames);
-        } else if (metadata instanceof KotlinClassMetadata.FileFacade fileFacadeMeta) {
-            KmPackage kmPackage = fileFacadeMeta.getKmPackage();
-            for (KmProperty p : kmPackage.getProperties()) {
-                propertyNames.add(p.getName());
-            }
-
-            String ownerInternal = cf.thisClassInternalName();
-            KotlinPropertyRegistry.register(ownerInternal, propertyNames);
-        } else {
-            // Fallback: метадата не прочиталась, но класс-то Kotlin'овский.
-            if (KotlinClassDetector.isKotlinClass(cf)) {
-                Set<String> inferred = inferKotlinPropertiesFromClassFile(cf);
-                propertyNames.addAll(inferred);
-
-                String ownerInternal = cf.thisClassInternalName();
-                KotlinPropertyRegistry.register(ownerInternal, propertyNames);
-            }
-        }
+        // Регистрируем эти свойства в глобальном реестре (ownerInternalName = internal name class-файла)
+        String ownerInternal = cf.thisClassInternalName();
+        KotlinPropertyRegistry.register(ownerInternal,propertyNames);
 
         KotlinPrettyPrinter printer = new KotlinPrettyPrinter(propertyNames);
         return printer.printMethod(cf, method, ast);
@@ -442,39 +415,6 @@ public final class KotlinLanguageBackend implements LanguageBackend {
         }
 
         return out.toString();
-    }
-
-    private static Set<String> inferKotlinPropertiesFromClassFile(ClassFile cf) {
-        Set<String> result = new HashSet<>();
-        ConstantPool cp = cf.constantPool();
-
-        // 1. Собираем имена полей
-        Set<String> fieldNames = new HashSet<>();
-        for (FieldInfo f : cf.fields()) {
-            String fieldName = cp.getUtf8(f.nameIndex());
-            fieldNames.add(fieldName);
-        }
-
-        // 2. Ищем геттеры / isX и смотрим, есть ли для них поле
-        for (MethodInfo m : cf.methods()) {
-            String name = cp.getUtf8(m.nameIndex());
-
-            String propName = null;
-            if (name.startsWith("get") && name.length() > 3) {
-                String base = name.substring(3);
-                String decap = Character.toLowerCase(base.charAt(0)) + base.substring(1);
-                propName = decap;
-            } else if (name.startsWith("is") && name.length() > 2) {
-                String base = name.substring(2);
-                String decap = Character.toLowerCase(base.charAt(0)) + base.substring(1);
-            }
-
-            if (propName != null && fieldNames.contains(propName)) {
-                result.add(propName);
-            }
-        }
-
-        return result;
     }
 
     private boolean shouldSkipLowLevelMethod(ClassFile cf, MethodInfo method) {
