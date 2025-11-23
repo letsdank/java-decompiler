@@ -1,5 +1,6 @@
 package net.letsdank.jd.gui;
 
+import net.letsdank.jd.ast.DecompilerOptions;
 import net.letsdank.jd.ast.MethodDecompiler;
 import net.letsdank.jd.bytecode.BytecodeDecoder;
 import net.letsdank.jd.bytecode.insn.*;
@@ -8,9 +9,9 @@ import net.letsdank.jd.lang.Language;
 import net.letsdank.jd.lang.LanguageBackend;
 import net.letsdank.jd.lang.LanguageBackends;
 import net.letsdank.jd.model.ClassFile;
-import net.letsdank.jd.model.attribute.CodeAttribute;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
+import net.letsdank.jd.model.attribute.CodeAttribute;
 import net.letsdank.jd.model.cp.*;
 
 import javax.swing.*;
@@ -38,6 +39,8 @@ public final class DecompilerFrame extends JFrame {
     private final AppSettings settings;
 
     private LanguageBackend currentBackend = LanguageBackends.forLanguage(Language.JAVA);
+    private final DecompilerOptions decompilerOptions = new DecompilerOptions();
+    private final MethodDecompiler methodDecompiler = new MethodDecompiler(decompilerOptions);
 
     private File currentFile; // .class или .jar
     private boolean currentIsJar;
@@ -95,6 +98,22 @@ public final class DecompilerFrame extends JFrame {
 
         add(split, BorderLayout.CENTER);
 
+        // Панель настроек слева (TODO: надо будет вынести в отдельное диалоговое окно)
+        JPanel settingsPanel = new JPanel();
+        settingsPanel.setLayout(new BoxLayout(settingsPanel, BoxLayout.Y_AXIS));
+        settingsPanel.setBorder(BorderFactory.createTitledBorder("Settings"));
+
+        JCheckBox hideIntrinsicsBox = new JCheckBox("Hide Kotlin Intrinsics", decompilerOptions.hideKotlinIntrinsics());
+        hideIntrinsicsBox.addActionListener(e -> {
+            decompilerOptions.setHideKotlinIntrinsics(hideIntrinsicsBox.isSelected());
+            refreshCurrentSelection();
+        });
+
+        settingsPanel.add(hideIntrinsicsBox);
+
+        add(settingsPanel, BorderLayout.EAST);
+        pack();
+
         // Меню "File -> Open .class"
         setJMenuBar(createMenuBar());
 
@@ -128,6 +147,20 @@ public final class DecompilerFrame extends JFrame {
 
         bar.add(fileMenu);
         return bar;
+    }
+
+    private void refreshCurrentSelection() {
+        Object node = tree.getLastSelectedPathComponent();
+        if(node == null) return;
+
+        if(node instanceof MethodTreeNode mNode) {
+            showMethodDetails(mNode.classFile(), mNode.method());
+        } else if (node instanceof DefaultMutableTreeNode dtmn) {
+            Object userObject = dtmn.getUserObject();
+            if(userObject instanceof ClassFile cf) {
+                showClassSummary(cf);
+            }
+        }
     }
 
     private void openClassFile() {
@@ -400,7 +433,6 @@ public final class DecompilerFrame extends JFrame {
 
         // --- Java (AST) ---
 
-        MethodDecompiler methodDecompiler = new MethodDecompiler();
         String source = currentBackend.decompileMethod(cf, method, methodDecompiler.decompile(method, cf));
         javaArea.setText(source);
         javaArea.setCaretPosition(0);
@@ -420,7 +452,6 @@ public final class DecompilerFrame extends JFrame {
         bytecodeArea.setText(sb.toString());
         bytecodeArea.setCaretPosition(0);
 
-        MethodDecompiler methodDecompiler = new MethodDecompiler();
         String source = currentBackend.decompileClass(cf, methodDecompiler);
         javaArea.setText(source);
         javaArea.setCaretPosition(0);

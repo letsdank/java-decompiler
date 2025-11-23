@@ -21,10 +21,16 @@ import java.util.List;
 public final class ExpressionBuilder {
     private final LocalNameProvider localNames;
     private final ConstantPool cp;
+    private final DecompilerOptions options;
 
     public ExpressionBuilder(LocalNameProvider localNames, ConstantPool cp) {
+        this(localNames, cp, new DecompilerOptions());
+    }
+
+    public ExpressionBuilder(LocalNameProvider localNames, ConstantPool cp, DecompilerOptions options) {
         this.localNames = localNames;
         this.cp = cp;
+        this.options = options;
     }
 
     /**
@@ -195,9 +201,11 @@ public final class ExpressionBuilder {
                         // Спец-кейс: kotlin.jvm.internal.Intrinsics.checkNotNullParameter(...)
                         CpMethodref mr = resolveMethodref(cpi.cpIndex());
                         String ownerInternal = cp.getClassName(mr.classIndex());
-                        if ("kotlin/jvm/internal/Intrinsics".equals(ownerInternal) &&
+                        if (options != null &&
+                                options.hideKotlinIntrinsics() &&
+                                "kotlin/jvm/internal/Intrinsics".equals(ownerInternal) &&
                                 "checkNotNullParameter".equals(methodName)) {
-                            // Просто снимаем аргументы со стека и не добавляем statemnt
+                            // Просто снимаем аргументы со стека и не добавляем statement
                             for (int i = 0; i < argCount; i++) {
                                 stack.pop();
                             }

@@ -26,6 +26,15 @@ import java.util.List;
 
 public final class MethodDecompiler {
     private final CfgBuilder cfgBuilder = new CfgBuilder();
+    private final DecompilerOptions options;
+
+    public MethodDecompiler() {
+        this(new DecompilerOptions());
+    }
+
+    public MethodDecompiler(DecompilerOptions options) {
+        this.options = options;
+    }
 
     public MethodAst decompile(MethodInfo method, ClassFile cf) {
         CodeAttribute codeAttr = method.findCodeAttribute();
@@ -62,7 +71,7 @@ public final class MethodDecompiler {
         // 3. Строим линейный AST по всему байткоду
         BytecodeDecoder decoder = new BytecodeDecoder();
         List<Insn> insns = decoder.decode(code);
-        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp);
+        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options);
         BlockStmt linearBody = exprBuilder.buildBlock(insns);
 
         // Fallback: просто линейный AST
@@ -175,7 +184,7 @@ public final class MethodDecompiler {
             // Очень простой паттерн: обе ветки заканчиваются return
             if (!endsWithReturn(jumpSucc) || !endsWithReturn(fallthrough)) continue;
 
-            ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp);
+            ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options);
             Deque<Expr> stackBefore = exprBuilder.simulateStackBeforeBranch(insns);
 
             // ВАЖНО: для if строим условие для FALLTHROUGH-ветки (исходный then)
@@ -228,7 +237,7 @@ public final class MethodDecompiler {
             }
 
             // теперь строим условие цикла
-            ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp);
+            ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options);
             var stackBefore = exprBuilder.simulateStackBeforeBranch(insns);
 
             Expr condition = buildLoopConditionExpr(j, stackBefore, bodyBlock.startOffset() == j.targetOffset());
