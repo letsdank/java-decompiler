@@ -4,10 +4,7 @@ import net.letsdank.jd.model.*;
 import net.letsdank.jd.model.annotation.AnnotationInfo;
 import net.letsdank.jd.model.annotation.KotlinMetadataAnnotationInfo;
 import net.letsdank.jd.model.annotation.SimpleAnnotationInfo;
-import net.letsdank.jd.model.attribute.AttributeInfo;
-import net.letsdank.jd.model.attribute.CodeAttribute;
-import net.letsdank.jd.model.attribute.RawAttribute;
-import net.letsdank.jd.model.attribute.RuntimeVisibleAnnotationsAttribute;
+import net.letsdank.jd.model.attribute.*;
 import net.letsdank.jd.model.cp.*;
 
 import java.io.ByteArrayInputStream;
@@ -280,6 +277,12 @@ public final class ClassFileReader {
                 data[i] = (byte) in.readU1();
             }
             return readRuntimeVisibleAnnotationsAttribute(name, data, cp);
+        } else if ("BootstrapMethods".equals(name)) {
+            byte[] data = new byte[(int) length];
+            for (int i = 0; i < length; i++) {
+                data[i] = (byte) in.readU1();
+            }
+            return readBootstrapMethodsAttribute(name, data, cp);
         } else {
             // Пропускаем тело атрибута
             byte[] data = new byte[(int) length];
@@ -316,6 +319,30 @@ public final class ClassFileReader {
             return new RuntimeVisibleAnnotationsAttribute(name, annotations);
         } catch (Exception e) {
             throw new IOException("Failed to parse RuntimeVisibleAnnotations", e);
+        }
+    }
+
+    private BootstrapMethodsAttribute readBootstrapMethodsAttribute(String name, byte[] data, ConstantPool cp)
+            throws IOException {
+        try (ClassFileInput in = new ClassFileInput(new ByteArrayInputStream(data))) {
+            int numBootstrapMethods = in.readU2();
+            BootstrapMethodsAttribute.BootstrapMethod[] methods
+                    = new BootstrapMethodsAttribute.BootstrapMethod[numBootstrapMethods];
+
+            for (int i = 0; i < numBootstrapMethods; i++) {
+                int methodRef = in.readU2();        // CONSTANT_MethodHandle
+                int numArgs = in.readU2();
+                int[] args = new int[numArgs];
+                for (int j = 0; j < numArgs; j++) {
+                    args[j] = in.readU2();            // индексы в constant pool
+                }
+                methods[i] = new BootstrapMethodsAttribute.BootstrapMethod(methodRef, args);
+            }
+
+            return new BootstrapMethodsAttribute(name,methods);
+        } catch (Exception e) {
+            // fail-soft, чтобы не завалить все чтение class-файла
+            return new BootstrapMethodsAttribute(name, new BootstrapMethodsAttribute.BootstrapMethod[0]);
         }
     }
 

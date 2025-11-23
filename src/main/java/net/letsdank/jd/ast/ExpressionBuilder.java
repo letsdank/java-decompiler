@@ -7,6 +7,7 @@ import net.letsdank.jd.ast.stmt.ExprStmt;
 import net.letsdank.jd.ast.stmt.ReturnStmt;
 import net.letsdank.jd.bytecode.insn.*;
 import net.letsdank.jd.model.ConstantPool;
+import net.letsdank.jd.model.attribute.BootstrapMethodsAttribute;
 import net.letsdank.jd.model.cp.*;
 
 import java.util.ArrayDeque;
@@ -22,15 +23,22 @@ public final class ExpressionBuilder {
     private final LocalNameProvider localNames;
     private final ConstantPool cp;
     private final DecompilerOptions options;
+    private final BootstrapMethodsAttribute bootstrapMethods;
 
     public ExpressionBuilder(LocalNameProvider localNames, ConstantPool cp) {
-        this(localNames, cp, new DecompilerOptions());
+        this(localNames, cp, new DecompilerOptions(), null);
     }
 
     public ExpressionBuilder(LocalNameProvider localNames, ConstantPool cp, DecompilerOptions options) {
+        this(localNames, cp, options, null);
+    }
+
+    public ExpressionBuilder(LocalNameProvider localNames, ConstantPool cp,
+                             DecompilerOptions options, BootstrapMethodsAttribute bootstrapMethods) {
         this.localNames = localNames;
         this.cp = cp;
         this.options = options;
+        this.bootstrapMethods = bootstrapMethods;
     }
 
     /**
@@ -232,6 +240,9 @@ public final class ExpressionBuilder {
                             stack.push(call);
                         }
                     }
+                    case INVOKEDYNAMIC -> {
+                        handleInvokeDynamic(stack, block, cpi);
+                    }
                     case GETFIELD -> {
                         CpFieldref fr = (CpFieldref) cp.entry(cpi.cpIndex());
                         CpClass owner = (CpClass) cp.entry(fr.classIndex());
@@ -276,6 +287,71 @@ public final class ExpressionBuilder {
         }
 
         return block;
+    }
+
+    private void handleInvokeDynamic(Deque<Expr> stack, BlockStmt block, ConstantPoolInsn cpi) {
+        CpInfo info = cp.entry(cpi.cpIndex());
+        if (!(info instanceof CpInvokeDynamic indy)) {
+            // На всякий случай - ничего умного сделать не можем
+            return;
+        }
+
+        // Дескриптор вызова (аргументы + возвращаемый тип)
+        CpNameAndType nt = (CpNameAndType) cp.entry(indy.nameAndTypeIndex());
+        String desc = cp.getUtf8(nt.descriptorIndex());
+        int argCount = argCountFromDescriptor(desc);
+
+        // Снимаем аргументы (в обратном порядке, как обычно)
+        List<Expr> args = new ArrayList<>(argCount);
+        for (int i = 0; i < argCount; i++) {
+            args.add(0, stack.pop());
+        }
+
+        // Если нет BootstrapMethods - просто представим это как обычный вызов
+        if (bootstrapMethods == null || bootstrapMethods.methods().length == 0) {
+            stack.push(makeGenericInvokeDynamicCall(nt, args));
+            return;
+        }
+
+        int bmIndex = indy.bootstrapMethodAttrIndex();
+        // bootstrap_method_attr_index - индекс в массиве bootstrapMethods
+        if (bmIndex < 0 || bmIndex >= bootstrapMethods.methods().length) {
+            stack.push(makeGenericInvokeDynamicCall(nt, args));
+            return;
+        }
+
+        BootstrapMethodsAttribute.BootstrapMethod bm = bootstrapMethods.methods()[bmIndex];
+
+        // Разбираем bootstrap method handle
+        CpMethodHandle mh = (CpMethodHandle) cp.entry(bm.bootstrapMethodRef());
+        CpMethodref targetRef = (CpMethodref) cp.entry(mh.referenceIndex());
+        String ownerInternal = cp.getClassName(targetRef.classIndex());
+        String owner = ownerInternal.replace('/', '.');
+
+        CpNameAndType targetNt = (CpNameAndType) cp.entry(targetRef.nameAndTypeIndex());
+        String targetName = cp.getUtf8(targetNt.nameIndex());
+
+        boolean isStringConcatFactory =
+                "java.lang.invoke.StringConcatFactory".equals(owner) &&
+                        ("makeConcatWithConstants".equals(targetName) || "makeConcat".equals(targetName));
+
+        if (isStringConcatFactory) {
+            Expr concat = buildStringConcatFromIndy(args, bm);
+            if (concat != null) {
+                stack.push(concat);
+                return;
+            }
+            // если не удалось - упадем в generic
+        }
+
+        // Fallback: псевдо-вызов, чтобы не ломать стек
+        stack.push(makeGenericInvokeDynamicCall(nt, args));
+    }
+
+    private Expr makeGenericInvokeDynamicCall(CpNameAndType nt, List<Expr> args) {
+        String name = cp.getUtf8(nt.nameIndex());
+        // Представим как обычный "глобальный" вызов: name(arg1, arg2)
+        return new CallExpr(null, name, List.copyOf(args));
     }
 
     private VarExpr varExpr(int index) {
@@ -415,6 +491,69 @@ public final class ExpressionBuilder {
         if (mr == null) return null;
         CpNameAndType nt = (CpNameAndType) cp.entry(mr.nameAndTypeIndex());
         return cp.getUtf8(nt.nameIndex());
+    }
+
+    private Expr buildStringConcatFromIndy(List<Expr> args, BootstrapMethodsAttribute.BootstrapMethod bm) {
+        // По спецификации: первый bootstrap-аргумент для makeConcatWithConstants - recipe-строка
+        if (bm.bootstrapArguments().length == 0) {
+            // Нет recipe - просто склеим аргумент через '+'.
+            return buildPlusChain(args);
+        }
+
+        int recipeIndex = bm.bootstrapArguments()[0];
+        CpInfo recipeEntry = cp.entry(recipeIndex);
+
+        if (!(recipeEntry instanceof CpString s)) {
+            return buildPlusChain(args);
+        }
+
+        String recipe = cp.getUtf8(s.stringIndex());
+        if (recipe == null) {
+            return buildPlusChain(args);
+        }
+
+        // В recipe используется '\u0001' как placeholder для аргументов
+        String[] parts = recipe.split("\u0001", -1);
+
+        Expr current = null;
+
+        // Префикс до первого аргумента
+        if (parts.length > 0 && !parts[0].isEmpty()) {
+            current = new StringLiteralExpr(parts[0]);
+        }
+
+        int dynamicCount = args.size();
+        for (int i = 0; i < dynamicCount; i++) {
+            Expr arg = args.get(i);
+
+            if (current == null) {
+                current = arg;
+            } else {
+                current = new BinaryExpr("+", current, arg);
+            }
+
+            // Следующий статический кусок после аргумента
+            if (i + 1 < parts.length && !parts[i + 1].isEmpty()) {
+                Expr staticPart = new StringLiteralExpr(parts[i + 1]);
+                current = new BinaryExpr("+", current, staticPart);
+            }
+        }
+
+        // На всякий случай: если recipe странный и current так и остался null
+        if (current == null) {
+            return buildPlusChain(args);
+        }
+
+        return current;
+    }
+
+    private Expr buildPlusChain(List<Expr> args) {
+        if (args.isEmpty()) return new StringLiteralExpr("");
+        Expr current = args.getFirst();
+        for (int i = 1; i < args.size(); i++) {
+            current = new BinaryExpr("+", current, args.get(i));
+        }
+        return current;
     }
 
     // Определяем количество аргументов по дескриптору, типа (II)I -> 2.

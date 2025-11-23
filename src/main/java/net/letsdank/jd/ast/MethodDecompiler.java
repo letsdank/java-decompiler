@@ -14,6 +14,8 @@ import net.letsdank.jd.cfg.BasicBlock;
 import net.letsdank.jd.cfg.CfgBuilder;
 import net.letsdank.jd.cfg.ControlFlowGraph;
 import net.letsdank.jd.model.ClassFile;
+import net.letsdank.jd.model.attribute.AttributeInfo;
+import net.letsdank.jd.model.attribute.BootstrapMethodsAttribute;
 import net.letsdank.jd.model.attribute.CodeAttribute;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
@@ -71,7 +73,17 @@ public final class MethodDecompiler {
         // 3. Строим линейный AST по всему байткоду
         BytecodeDecoder decoder = new BytecodeDecoder();
         List<Insn> insns = decoder.decode(code);
-        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options);
+
+        // Найдем BootstrapMethods на уровне класса (если есть)
+        BootstrapMethodsAttribute bootstrap = null;
+        for(AttributeInfo attr:cf.attributes()) {
+            if(attr instanceof BootstrapMethodsAttribute bmAttr){
+                bootstrap=bmAttr;
+                break;
+            }
+        }
+
+        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options, bootstrap);
         BlockStmt linearBody = exprBuilder.buildBlock(insns);
 
         // Fallback: просто линейный AST
