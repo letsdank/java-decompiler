@@ -9,12 +9,17 @@ import net.letsdank.jd.ast.KotlinTypeUtils;
 import net.letsdank.jd.ast.MethodAst;
 import net.letsdank.jd.ast.MethodDecompiler;
 import net.letsdank.jd.kotlin.KotlinMetadataExtractor;
+import net.letsdank.jd.kotlin.KotlinPropertyRegistry;
 import net.letsdank.jd.kotlin.MetadataFlagsKt;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.ConstantPool;
+import net.letsdank.jd.model.FieldInfo;
 import net.letsdank.jd.model.MethodInfo;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Бэкенд, который печатает методы в виде Kotlin-кода,
@@ -28,7 +33,40 @@ public final class KotlinLanguageBackend implements LanguageBackend {
 
     @Override
     public String decompileMethod(ClassFile cf, MethodInfo method, MethodAst ast) {
-        KotlinPrettyPrinter printer = new KotlinPrettyPrinter();
+        // Пытаемся вытащить Kotlin-метаданные для этого class-файла
+        KotlinClassMetadata metadata = KotlinMetadataExtractor.extractFromClassFile(cf);
+
+        Set<String> propertyNames = new HashSet<>();
+
+        if (metadata instanceof KotlinClassMetadata.Class classMeta) {
+            KmClass kmClass = classMeta.getKmClass();
+            for (KmProperty p : kmClass.getProperties()) {
+                propertyNames.add(p.getName());
+            }
+
+            // Регистрируем свойства этого класса в глобальном реестре
+            String ownerInternal = cf.thisClassInternalName();
+            KotlinPropertyRegistry.register(ownerInternal, propertyNames);
+        } else if (metadata instanceof KotlinClassMetadata.FileFacade fileFacadeMeta) {
+            KmPackage kmPackage = fileFacadeMeta.getKmPackage();
+            for (KmProperty p : kmPackage.getProperties()) {
+                propertyNames.add(p.getName());
+            }
+
+            String ownerInternal = cf.thisClassInternalName();
+            KotlinPropertyRegistry.register(ownerInternal, propertyNames);
+        } else {
+            // Fallback: метадата не прочиталась, но класс-то Kotlin'овский.
+            if (KotlinClassDetector.isKotlinClass(cf)) {
+                Set<String> inferred = inferKotlinPropertiesFromClassFile(cf);
+                propertyNames.addAll(inferred);
+
+                String ownerInternal = cf.thisClassInternalName();
+                KotlinPropertyRegistry.register(ownerInternal, propertyNames);
+            }
+        }
+
+        KotlinPrettyPrinter printer = new KotlinPrettyPrinter(propertyNames);
         return printer.printMethod(cf, method, ast);
     }
 
@@ -53,7 +91,6 @@ public final class KotlinLanguageBackend implements LanguageBackend {
     private String decompileFileFacade(ClassFile cf, MethodDecompiler decompiler,
                                        KotlinClassMetadata.FileFacade meta) {
         StringBuilder out = new StringBuilder();
-        KotlinPrettyPrinter printer = new KotlinPrettyPrinter();
 
         // Можно попытаться вывести package, если он есть (через ClassFile или через KmPackage)
         KmPackage kmPackage = meta.getKmPackage();
@@ -64,9 +101,48 @@ public final class KotlinLanguageBackend implements LanguageBackend {
             out.append("package ").append(pkg).append("\n\n");
         }
 
+        // Собираем свойства из KmPackage
+        List<KmProperty> kmProps = kmPackage.getProperties();
+        List<KotlinPropertyModel> properties = new ArrayList<>();
+        for (KmProperty p : kmProps) {
+            String name = p.getName();
+            String type = KotlinTypeUtils.kmTypeToKotlin(p.getReturnType());
+            boolean isVar = MetadataFlagsKt.isVarProperty(p);
+            properties.add(new KotlinPropertyModel(name, type, isVar, true));
+        }
+
+        // Собираем список имен свойств для принтера, чтобы он мог знать,
+        // какие getX()/isX() относятся к настоящим Kotlin-свойствам из метаданных
+        Set<String> propertyNames = new HashSet<>();
+        for (KotlinPropertyModel p : properties) {
+            propertyNames.add(p.name);
+        }
+        String ownerInternal = cf.thisClassInternalName();
+
+        // Регистрируем свойства файла в глобальном реестре
+        KotlinPropertyRegistry.register(ownerInternal, propertyNames);
+
+        // Создаем принтер с информацией о свойствах
+        KotlinPrettyPrinter printer = new KotlinPrettyPrinter(propertyNames);
+
         out.append("// Kotlin file facade for ")
                 .append(cf.thisClassFqn())
                 .append("\n\n");
+
+        // Печатаем top-level свойства
+        for (KotlinPropertyModel p : properties) {
+            String varOrVal = p.isVar ? "var" : "val";
+            out.append(varOrVal)
+                    .append(" ")
+                    .append(p.name)
+                    .append(": ")
+                    .append(p.type)
+                    .append("\n");
+        }
+
+        if (!properties.isEmpty()) {
+            out.append("\n");
+        }
 
         for (MethodInfo method : cf.methods()) {
             MethodAst ast = decompiler.decompile(method, cf);
@@ -79,8 +155,6 @@ public final class KotlinLanguageBackend implements LanguageBackend {
 
     private String decompileKotlinClass(ClassFile cf, MethodDecompiler decompiler, KotlinClassMetadata.Class classMeta) {
         StringBuilder out = new StringBuilder();
-        KotlinPrettyPrinter printer = new KotlinPrettyPrinter();
-
         KmClass kmClass = classMeta.getKmClass();
 
         // Вычисляем package и простое имя по FQN class-файла
@@ -96,6 +170,32 @@ public final class KotlinLanguageBackend implements LanguageBackend {
         if (pkg != null && !pkg.isEmpty()) {
             out.append("package ").append(pkg).append("\n\n");
         }
+
+        // Свойства класса из KmClass
+        List<KmProperty> kmProps = kmClass.getProperties();
+        List<KotlinPropertyModel> properties = new ArrayList<>();
+        for (KmProperty p : kmProps) {
+            String name = p.getName();
+            String type = KotlinTypeUtils.kmTypeToKotlin(p.getReturnType());
+            boolean isVar = MetadataFlagsKt.isVarProperty(p);
+            properties.add(new KotlinPropertyModel(name, type, isVar, false));
+        }
+
+        // Имена свойств для принтера (используем только имена, без эвристики на getX)
+        Set<String> propertyNames = new HashSet<>();
+        for (KotlinPropertyModel p : properties) {
+            propertyNames.add(p.name);
+        }
+
+        // Регистрируем свойства этого класса в глобальном реестре
+        String ownerInternal = cf.thisClassInternalName();
+        KotlinPropertyRegistry.register(ownerInternal, propertyNames);
+
+        // AccessNames - для фильтрации getter/setter в этом же классе
+        PropertyAccessNames accessNames = buildPropertyAccessNames(propertyNames);
+
+        // Принтер с набором имен свойств
+        KotlinPrettyPrinter printer = new KotlinPrettyPrinter(propertyNames);
 
         // Companion: SampleService$Companion -> class SampleService { companion object { ... } }
         boolean isCompanionLike = simpleName.endsWith("$Companion");
@@ -187,8 +287,33 @@ public final class KotlinLanguageBackend implements LanguageBackend {
 
         out.append(header).append(simpleName).append(" {\n\n");
 
+        // Печатаем top-level свойства
+        for (KotlinPropertyModel p : properties) {
+            String varOrVal = p.isVar ? "var" : "val";
+            out.append(varOrVal)
+                    .append(" ")
+                    .append(p.name)
+                    .append(": ")
+                    .append(p.type)
+                    .append("\n");
+        }
+
+        if (!properties.isEmpty()) {
+            out.append("\n");
+        }
+
         for (MethodInfo method : cf.methods()) {
             if (shouldSkipKotlinSynthMethod(cf, method)) continue;
+
+            ConstantPool cp = cf.constantPool();
+            String methodName = cp.getUtf8(method.nameIndex());
+
+            // Если это геттер/сеттер свойства, не выводим его как обычную функцию
+            if (accessNames.getterNames.contains(methodName) ||
+                    accessNames.setterNames.contains(methodName)) {
+                continue;
+            }
+
             MethodAst ast = decompiler.decompile(method, cf);
             String methodText = printer.printMethod(cf, method, ast);
             out.append(indent(methodText)).append("\n\n");
@@ -212,6 +337,15 @@ public final class KotlinLanguageBackend implements LanguageBackend {
             // На всякий случай: странный "data class" без свойств - отдадим обработку дальше
             return null;
         }
+
+        // Регистрируем свойства этого data class в глобальном реестре
+        String ownerInternal = cf.thisClassInternalName();
+
+        Set<String> propertyNames = new HashSet<>();
+        for (KmProperty p : properties) {
+            propertyNames.add(p.getName()); // "id", "name"
+        }
+        KotlinPropertyRegistry.register(ownerInternal, propertyNames);
 
         // 3. Вычисляем имя класса
         String fqn = cf.thisClassFqn();
@@ -310,6 +444,39 @@ public final class KotlinLanguageBackend implements LanguageBackend {
         return out.toString();
     }
 
+    private static Set<String> inferKotlinPropertiesFromClassFile(ClassFile cf) {
+        Set<String> result = new HashSet<>();
+        ConstantPool cp = cf.constantPool();
+
+        // 1. Собираем имена полей
+        Set<String> fieldNames = new HashSet<>();
+        for (FieldInfo f : cf.fields()) {
+            String fieldName = cp.getUtf8(f.nameIndex());
+            fieldNames.add(fieldName);
+        }
+
+        // 2. Ищем геттеры / isX и смотрим, есть ли для них поле
+        for (MethodInfo m : cf.methods()) {
+            String name = cp.getUtf8(m.nameIndex());
+
+            String propName = null;
+            if (name.startsWith("get") && name.length() > 3) {
+                String base = name.substring(3);
+                String decap = Character.toLowerCase(base.charAt(0)) + base.substring(1);
+                propName = decap;
+            } else if (name.startsWith("is") && name.length() > 2) {
+                String base = name.substring(2);
+                String decap = Character.toLowerCase(base.charAt(0)) + base.substring(1);
+            }
+
+            if (propName != null && fieldNames.contains(propName)) {
+                result.add(propName);
+            }
+        }
+
+        return result;
+    }
+
     private boolean shouldSkipLowLevelMethod(ClassFile cf, MethodInfo method) {
         ConstantPool cp = cf.constantPool();
         String name = cp.getUtf8(method.nameIndex());
@@ -352,5 +519,41 @@ public final class KotlinLanguageBackend implements LanguageBackend {
             sb.append('\n');
         }
         return sb.toString();
+    }
+
+    private static String capitalize(String s) {
+        if (s == null || s.isEmpty()) return s;
+        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
+
+    private static PropertyAccessNames buildPropertyAccessNames(Set<String> propertyNames) {
+        PropertyAccessNames pan = new PropertyAccessNames();
+        for (String prop : propertyNames) {
+            String cap = capitalize(prop);
+            // стандартные соглашения
+            pan.getterNames.add("get" + cap);
+            pan.getterNames.add("is" + cap); // для Boolean-свойств
+            pan.setterNames.add("set" + cap);
+        }
+        return pan;
+    }
+
+    private static final class KotlinPropertyModel {
+        final String name;          // имя свойства в Kotlin (user, greeting, count)
+        final String type;          // отрендеренный тип (String, Int, User, List<String>...)
+        final boolean isVar;        // var или val
+        final boolean isTopLevel;   // top-level (file facade) или член класса
+
+        KotlinPropertyModel(String name, String type, boolean isVar, boolean isTopLevel) {
+            this.name = name;
+            this.type = type;
+            this.isVar = isVar;
+            this.isTopLevel = isTopLevel;
+        }
+    }
+
+    private static class PropertyAccessNames {
+        final Set<String> getterNames = new HashSet<>();
+        final Set<String> setterNames = new HashSet<>();
     }
 }

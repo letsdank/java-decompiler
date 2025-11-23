@@ -114,7 +114,10 @@ public final class KotlinMetadataExtractor {
             if (metaInfo != null) break;
         }
 
-        if (metaInfo == null) return null;
+        if (metaInfo == null) {
+            System.out.println("KME: no KotlinMetadataAnnotationInfo for " + cf.thisClassInternalName());
+            return null;
+        }
 
         // Собираем kotlin.Metadata из наших полей
         int kind = metaInfo.kind();
@@ -175,9 +178,9 @@ public final class KotlinMetadataExtractor {
         try {
             return KotlinClassMetadata.Companion.readLenient(metadata);
         } catch (InconsistentKotlinMetadataException e) {
-            // Метаданные битые / неподдерживаемые - просто не используем их.
+            // ВАЖНО: не считаем класс "не Kotlin", просто не умеем читать метадату данной версии
             return null;
-        } catch (Exception e){
+        } catch (Exception e) {
             // На всякий случай - любые другие проблемы тоже не должны ронять GUI
             return null;
         }

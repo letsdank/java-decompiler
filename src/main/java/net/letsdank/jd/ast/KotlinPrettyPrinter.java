@@ -2,6 +2,7 @@ package net.letsdank.jd.ast;
 
 import net.letsdank.jd.ast.expr.*;
 import net.letsdank.jd.ast.stmt.*;
+import net.letsdank.jd.kotlin.KotlinPropertyRegistry;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
@@ -9,6 +10,7 @@ import net.letsdank.jd.model.MethodInfo;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Простейший pretty-printer в Kotlin.
@@ -18,6 +20,16 @@ import java.util.List;
 public final class KotlinPrettyPrinter {
     private final StringBuilder sb = new StringBuilder();
     private int indent = 0;
+
+    private final Set<String> knownProperties;
+
+    public KotlinPrettyPrinter() {
+        this(Set.of());
+    }
+
+    public KotlinPrettyPrinter(Set<String> knownProperties) {
+        this.knownProperties = knownProperties;
+    }
 
     public String printMethod(ClassFile cf, MethodInfo method, MethodAst ast) {
         sb.setLength(0);
@@ -201,6 +213,7 @@ public final class KotlinPrettyPrinter {
      * - в остальных случаях делегирует в toString().
      */
     private String printExpr(Expr expr) {
+        // 1. Строковые конкатенации -> Kotlin-шаблоны
         if (expr instanceof BinaryExpr bin && "+".equals(bin.op())) {
             List<Expr> chain = new ArrayList<>();
             flattenPlus(bin, chain);
@@ -215,7 +228,61 @@ public final class KotlinPrettyPrinter {
                 return buildKotlinStringTemplate(chain);
             }
         }
+
+        // 2. Попытка интерпретировать вызов как доступ к свойству
+        if (expr instanceof CallExpr call) {
+            String propAccess = tryPrintPropertyAccess(call);
+            if (propAccess != null) return propAccess;
+        }
+
+        // 3. Обычный случай
         return printSimpleExpr(expr);
+    }
+
+    private String tryPrintPropertyAccess(CallExpr call) {
+        String methodName = call.methodName();
+
+        // 1. Пробуем вытащить имя свойства из имени метода
+        String propName = null;
+
+        if (methodName.startsWith("get") && methodName.length() > 3) {
+            String base = methodName.substring(3);
+            propName = Character.toLowerCase(base.charAt(0)) + base.substring(1);
+        } else if (methodName.startsWith("is") && methodName.length() > 2) {
+            String base = methodName.substring(2);
+            propName = Character.toLowerCase(base.charAt(0)) + base.substring(1);
+        }
+
+        if (propName == null) {
+            return null; // это не property-getter, а обычный метод
+        }
+
+        // 2. Если известен ownerInternalName - проверяем глобальный реестр
+        String ownerInternal = call.ownerInternalName();
+        boolean isProperty;
+
+        if (ownerInternal != null) {
+            // основной путь: есть ownerInternalName -> смотрим в глобальный реестр
+            isProperty = KotlinPropertyRegistry.hasProperty(ownerInternal, propName);
+        } else {
+            // fallback: если owner неизвестен (например, this/текущий файл) -
+            // используем локальный набор свойств класса/файла
+            isProperty = knownProperties.contains(propName);
+        }
+
+        if (!isProperty) {
+            // метаданные говорят, что это не property, а обычный метод
+            return null;
+        }
+
+        // 3. Печатаем доступ к свойству
+        if (call.target() == null) {
+            // top-level property (или статическое property без объекта)
+            return propName;
+        } else {
+            // доступ через объект: a.name
+            return printExpr(call.target()) + "." + propName;
+        }
     }
 
     private String printSimpleExpr(Expr expr) {
@@ -246,7 +313,7 @@ public final class KotlinPrettyPrinter {
                 // this.field -> $field
                 out.append("$").append(fa.fieldName());
             } else {
-                out.append("${").append(printSimpleExpr(part)).append("}");
+                out.append("${").append(printExpr(part)).append("}");
             }
         }
         out.append("\"");

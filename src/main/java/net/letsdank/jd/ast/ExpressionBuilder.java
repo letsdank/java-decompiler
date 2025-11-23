@@ -182,6 +182,13 @@ public final class ExpressionBuilder {
                         int argCount = argCountFromDescriptor(descriptor);
                         boolean isVoid = descriptor != null && descriptor.endsWith(")V");
 
+                        // 1.1. Достаем owner из constant pool
+                        CpMethodref mr = resolveMethodref(cpi.cpIndex());
+                        String ownerInternal = null;
+                        if (mr != null) {
+                            ownerInternal = cp.getClassName(mr.classIndex()); // например "net/letsdank/jd/fixtures/User"
+                        }
+
                         // 2. Снимаем аргументы (в обратном порядке) и target
                         List<Expr> args = new ArrayList<>(argCount);
                         for (int i = 0; i < argCount; i++) {
@@ -191,7 +198,8 @@ public final class ExpressionBuilder {
 
                         // снимаем объект (this)
                         Expr target = stack.pop();
-                        CallExpr call = new CallExpr(target, methodName, List.copyOf(args));
+                        CallExpr call = new CallExpr(target, ownerInternal, methodName, List.copyOf(args));
+                        System.out.println("INVOKEVIRTUAL " + ownerInternal + "." + methodName);
 
                         if (isVoid) {
                             // println(...) и прочие void -> statement
@@ -233,7 +241,7 @@ public final class ExpressionBuilder {
                         // Представим статический вызов как expr "Owner.method(args...)"
                         Expr target = new VarExpr(ownerSimple);
 
-                        CallExpr call = new CallExpr(target, methodName, List.copyOf(args));
+                        CallExpr call = new CallExpr(target, ownerInternal, methodName, List.copyOf(args));
                         if (isVoid) {
                             block.add(new ExprStmt(call));
                         } else {
@@ -351,7 +359,7 @@ public final class ExpressionBuilder {
     private Expr makeGenericInvokeDynamicCall(CpNameAndType nt, List<Expr> args) {
         String name = cp.getUtf8(nt.nameIndex());
         // Представим как обычный "глобальный" вызов: name(arg1, arg2)
-        return new CallExpr(null, name, List.copyOf(args));
+        return new CallExpr(null, null, name, List.copyOf(args));
     }
 
     private VarExpr varExpr(int index) {
