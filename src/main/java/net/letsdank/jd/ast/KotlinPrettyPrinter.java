@@ -1,15 +1,13 @@
 package net.letsdank.jd.ast;
 
-import net.letsdank.jd.ast.expr.BinaryExpr;
-import net.letsdank.jd.ast.expr.Expr;
-import net.letsdank.jd.ast.expr.IntConstExpr;
-import net.letsdank.jd.ast.expr.VarExpr;
+import net.letsdank.jd.ast.expr.*;
 import net.letsdank.jd.ast.stmt.*;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
 
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -119,7 +117,7 @@ public final class KotlinPrettyPrinter {
     private void printIf(IfStmt ifs) {
         Expr cond = ifs.condition();
 
-        appendLine("if (" + cond + ") {");
+        appendLine("if (" + printExpr(cond) + ") {");
         indent++;
         for (Stmt s : ifs.thenBlock().statements()) {
             printStmt(s);
@@ -143,7 +141,7 @@ public final class KotlinPrettyPrinter {
         String initStr = fs.init() != null ? stmtToInline(fs.init()) : "";
         String updateStr = fs.update() != null ? stmtToInline(fs.update()) : "";
 
-        appendLine("for (" + initStr + "; " + fs.condition() + "; " + updateStr + ") {");
+        appendLine("for (" + initStr + "; " + printExpr(fs.condition()) + "; " + updateStr + ") {");
         indent++;
         for (Stmt s : fs.body().statements()) {
             printStmt(s);
@@ -153,7 +151,7 @@ public final class KotlinPrettyPrinter {
     }
 
     private void printLoop(LoopStmt loop) {
-        appendLine("while (" + loop.condition() + ") {");
+        appendLine("while (" + printExpr(loop.condition()) + ") {");
         indent++;
         for (Stmt s : loop.body().statements()) {
             printStmt(s);
@@ -174,26 +172,103 @@ public final class KotlinPrettyPrinter {
             return;
         }
 
-        appendLine(target.toString() + " = " + value.toString());
+        appendLine(printExpr(target) + " = " + printExpr(value));
     }
 
     private void printReturn(ReturnStmt rs) {
         if (rs.value() == null) appendLine("return");
-        else appendLine("return " + rs.value().toString());
+        else appendLine("return " + printExpr(rs.value()));
     }
 
     private void printExprStmt(ExprStmt es) {
-        appendLine(es.expr().toString());
+        appendLine(printExpr(es.expr()));
     }
 
     private String stmtToInline(Stmt s) {
         if (s instanceof AssignStmt as) {
-            return as.target().toString() + " = " + as.value().toString();
+            return printExpr(as.target()) + " = " + printExpr(as.value());
         }
         if (s instanceof ExprStmt es) {
-            return es.expr().toString();
+            return printExpr(es.expr());
         }
         return s.toString();
+    }
+
+    /**
+     * Унифицированный принтер выражений для Kotlin.
+     * Умеет:
+     * - распознавать конкатенации строк и печатать их как строковые шаблоны;
+     * - в остальных случаях делегирует в toString().
+     */
+    private String printExpr(Expr expr) {
+        if (expr instanceof BinaryExpr bin && "+".equals(bin.op())) {
+            List<Expr> chain = new ArrayList<>();
+            flattenPlus(bin, chain);
+            boolean hasStringLiteral = false;
+            for (Expr e : chain) {
+                if (e instanceof StringLiteralExpr) {
+                    hasStringLiteral = true;
+                    break;
+                }
+            }
+            if (hasStringLiteral) {
+                return buildKotlinStringTemplate(chain);
+            }
+        }
+        return printSimpleExpr(expr);
+    }
+
+    private String printSimpleExpr(Expr expr) {
+        return expr.toString();
+    }
+
+    private void flattenPlus(Expr expr, List<Expr> out) {
+        if (expr instanceof BinaryExpr bin && "+".equals(bin.op())) {
+            flattenPlus(bin.left(), out);
+            flattenPlus(bin.right(), out);
+        } else {
+            out.add(expr);
+        }
+    }
+
+    private String buildKotlinStringTemplate(List<Expr> parts) {
+        StringBuilder out = new StringBuilder();
+        out.append("\"");
+        for (Expr part : parts) {
+            if (part instanceof StringLiteralExpr s) {
+                out.append(escapeKotlinString(s.value()));
+            } else if (part instanceof VarExpr v && isSimpleIdentifier(v.name())) {
+                out.append("$").append(v.name());
+            } else if (part instanceof FieldAccessExpr fa &&
+                    fa.target() instanceof VarExpr v &&
+                    "this".equals(v.name()) &&
+                    isSimpleIdentifier(fa.fieldName())) {
+                // this.field -> $field
+                out.append("$").append(fa.fieldName());
+            } else {
+                out.append("${").append(printSimpleExpr(part)).append("}");
+            }
+        }
+        out.append("\"");
+        return out.toString();
+    }
+
+    private String escapeKotlinString(String raw) {
+        String escaped = raw
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"");
+        // Экранируем $ внутри литерала, чтобы он не стал началом шаблона
+        escaped = escaped.replace("$", "\\$");
+        return escaped;
+    }
+
+    private boolean isSimpleIdentifier(String name) {
+        if (name == null || name.isEmpty()) return false;
+        if (!Character.isJavaIdentifierPart(name.charAt(0))) return false;
+        for (int i = 1; i < name.length(); i++) {
+            if (!Character.isJavaIdentifierPart(name.charAt(i))) return false;
+        }
+        return true;
     }
 
     private void appendLine(String line) {
