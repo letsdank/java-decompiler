@@ -32,12 +32,15 @@ public final class KotlinLanguageBackend implements LanguageBackend {
     }
 
     @Override
-    public String decompileMethod(ClassFile cf, MethodInfo method, MethodAst ast){
-        Set<String> propertyNames = KotlinMetadataReader.readEffectivePropertyNames(cf);
+    public String decompileMethod(ClassFile cf, MethodInfo method, MethodAst ast) {
+        KotlinMetadataReader.KotlinClassModel model = KotlinMetadataReader.readClassModel(cf);
+
+        // Используем имена свойств для принтера (локально - для текущего класса/файла)
+        Set<String> propertyNames = model.propertyNames();
 
         // Регистрируем эти свойства в глобальном реестре (ownerInternalName = internal name class-файла)
         String ownerInternal = cf.thisClassInternalName();
-        KotlinPropertyRegistry.register(ownerInternal,propertyNames);
+        KotlinPropertyRegistry.register(ownerInternal, propertyNames);
 
         KotlinPrettyPrinter printer = new KotlinPrettyPrinter(propertyNames);
         return printer.printMethod(cf, method, ast);
