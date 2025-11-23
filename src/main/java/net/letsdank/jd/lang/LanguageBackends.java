@@ -13,7 +13,7 @@ public final class LanguageBackends {
 
     static {
         register(new JavaLanguageBackend());
-        register(new KotlinLanguageBackend());
+        register(new KotlinLanguageBackend(null));
     }
 
     private LanguageBackends() {

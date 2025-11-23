@@ -12,12 +12,22 @@ public final class DecompilerOptions {
      */
     private boolean hideKotlinIntrinsics = true;
 
-    public boolean hideKotlinIntrinsics(){
+    private boolean useKotlinxMetadata = true;
+
+    public boolean hideKotlinIntrinsics() {
         return hideKotlinIntrinsics;
+    }
+
+    public boolean useKotlinxMetadata() {
+        return useKotlinxMetadata;
     }
 
     public void setHideKotlinIntrinsics(boolean hideKotlinIntrinsics) {
         this.hideKotlinIntrinsics = hideKotlinIntrinsics;
+    }
+
+    public void setUseKotlinxMetadata(boolean useKotlinxMetadata) {
+        this.useKotlinxMetadata = useKotlinxMetadata;
     }
 
     // сюда позже можно добавить:

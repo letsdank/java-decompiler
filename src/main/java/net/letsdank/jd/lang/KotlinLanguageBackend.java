@@ -4,10 +4,7 @@ import kotlin.metadata.KmClass;
 import kotlin.metadata.KmPackage;
 import kotlin.metadata.KmProperty;
 import kotlin.metadata.jvm.KotlinClassMetadata;
-import net.letsdank.jd.ast.KotlinPrettyPrinter;
-import net.letsdank.jd.ast.KotlinTypeUtils;
-import net.letsdank.jd.ast.MethodAst;
-import net.letsdank.jd.ast.MethodDecompiler;
+import net.letsdank.jd.ast.*;
 import net.letsdank.jd.kotlin.KotlinMetadataExtractor;
 import net.letsdank.jd.kotlin.KotlinMetadataReader;
 import net.letsdank.jd.kotlin.KotlinPropertyRegistry;
@@ -26,6 +23,13 @@ import java.util.Set;
  * используя существующий AST и KotlinPrettyPrinter.
  */
 public final class KotlinLanguageBackend implements LanguageBackend {
+
+    private final DecompilerOptions options;
+
+    public KotlinLanguageBackend(DecompilerOptions options) {
+        this.options = options;
+    }
+
     @Override
     public Language language() {
         return Language.KOTLIN;
@@ -33,7 +37,7 @@ public final class KotlinLanguageBackend implements LanguageBackend {
 
     @Override
     public String decompileMethod(ClassFile cf, MethodInfo method, MethodAst ast) {
-        KotlinMetadataReader.KotlinClassModel model = KotlinMetadataReader.readClassModel(cf);
+        KotlinMetadataReader.KotlinClassModel model = KotlinMetadataReader.readClassModel(cf, options);
 
         // Используем имена свойств для принтера (локально - для текущего класса/файла)
         Set<String> propertyNames = model.propertyNames();

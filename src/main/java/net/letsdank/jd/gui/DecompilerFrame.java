@@ -109,7 +109,14 @@ public final class DecompilerFrame extends JFrame {
             refreshCurrentSelection();
         });
 
+        JCheckBox useKotlinxMetadataBox = new JCheckBox("Use Kotlin metadata library", true);
+        useKotlinxMetadataBox.addActionListener(e -> {
+            decompilerOptions.setUseKotlinxMetadata(useKotlinxMetadataBox.isSelected());
+            refreshCurrentSelection();
+        });
+
         settingsPanel.add(hideIntrinsicsBox);
+        settingsPanel.add(useKotlinxMetadataBox);
 
         add(settingsPanel, BorderLayout.EAST);
         pack();

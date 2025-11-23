@@ -4,6 +4,7 @@ import kotlin.metadata.KmClass;
 import kotlin.metadata.KmPackage;
 import kotlin.metadata.KmProperty;
 import kotlin.metadata.jvm.KotlinClassMetadata;
+import net.letsdank.jd.ast.DecompilerOptions;
 import net.letsdank.jd.ast.KotlinTypeUtils;
 import net.letsdank.jd.lang.KotlinClassDetector;
 import net.letsdank.jd.model.ClassFile;
@@ -76,6 +77,10 @@ public final class KotlinMetadataReader {
         }
     }
 
+    public static KotlinClassModel readClassModel(ClassFile cf) {
+        return readClassModel(cf, null);
+    }
+
     /**
      * Главный метод: читает модель Kotlin-класса (или file-facade) по ClassFile.
      * <p>
@@ -85,17 +90,21 @@ public final class KotlinMetadataReader {
      * используются эвристики по полям+геттерам.
      * - Если класс не Kotlin - isKotlinClass=false, свойства пустые.
      */
-    public static KotlinClassModel readClassModel(ClassFile cf) {
+    public static KotlinClassModel readClassModel(ClassFile cf, DecompilerOptions options) {
         String internalName = cf.thisClassInternalName();
         boolean isKotlin = KotlinClassDetector.isKotlinClass(cf);
 
         KotlinClassMetadata metadata = null;
-        try {
-            metadata = KotlinMetadataExtractor.extractFromClassFile(cf);
-        } catch (Throwable ignored) {
-            // на всякий случай не даем упасть
+        boolean hasMetadata = false;
+
+        if (options == null || options.useKotlinxMetadata()) {
+            try {
+                metadata = KotlinMetadataExtractor.extractFromClassFile(cf);
+                hasMetadata = metadata != null;
+            } catch (Throwable ignored) {
+                // на всякий случай не даем упасть
+            }
         }
-        boolean hasMetadata = metadata != null;
 
         List<KotlinPropertyModel> props = new ArrayList<>();
         KotlinClassModel.Kind kind = KotlinClassModel.Kind.UNKNOWN;

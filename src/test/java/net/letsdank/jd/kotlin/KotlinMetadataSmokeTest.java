@@ -23,7 +23,7 @@ class KotlinMetadataSmokeTest {
 
             System.out.println("User KotlinClassModel: " + model);
 
-            assertFalse(model.isKotlinClass(), "User should be recognized as Kotlin class");
+            assertTrue(model.isKotlinClass(), "User should be recognized as Kotlin class");
             assertTrue(model.propertyNames().contains("id"), "User should have property 'id'");
             assertTrue(model.propertyNames().contains("name"), "User should have property 'name'");
         }
