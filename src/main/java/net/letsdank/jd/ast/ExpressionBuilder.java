@@ -58,14 +58,63 @@ public final class ExpressionBuilder {
                         Expr left = stack.pop();
                         stack.push(new BinaryExpr("+", left, right));
                     }
+                    case ISUB -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("-", left, right));
+                    }
                     case IMUL -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
                         stack.push(new BinaryExpr("*", left, right));
                     }
+                    case IDIV -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("/", left, right));
+                    }
+                    case IREM -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("%", left, right));
+                    }
                     case INEG -> {
                         Expr v = stack.pop();
                         stack.push(new UnaryExpr("-", v));
+                    }
+
+                    // побитовые операции
+                    case IAND -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("&",left,right));
+                    }
+                    case IOR -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("|",left,right));
+                    }
+                    case IXOR -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("^",left,right));
+                    }
+
+                    // сдвиги
+                    case ISHL -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("<<", left,right));
+                    }
+                    case ISHR -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr(">>",left,right));
+                    }
+                    case IUSHR -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr(">>>", left,right));
                     }
 
                     // возвраты
@@ -118,6 +167,21 @@ public final class ExpressionBuilder {
                     case ISTORE_3 -> {
                         Expr value = stack.pop();
                         block.add(new AssignStmt(varExpr(3), value));
+                    }
+
+                    // операции со стеком
+                    case POP -> {
+                        // просто выкидываем верхнее выражение
+                        if(!stack.isEmpty()) {
+                            stack.pop();
+                        }
+                    }
+                    case DUP -> {
+                        // дублируем верхушку стека
+                        if(!stack.isEmpty()) {
+                            Expr v = stack.peek();
+                            stack.push(v);
+                        }
                     }
 
                     default -> {
@@ -173,6 +237,9 @@ public final class ExpressionBuilder {
                             // Самый простой вариант - представить это как строку,
                             // чтобы не падать и хоть как-то отобразить:
                             stack.push(new StringLiteralExpr(internalName));
+                        } else if (e instanceof CpInteger i) {
+                            int value = i.value();
+                            stack.push(new IntConstExpr(value));
                         }
                     }
                     case GETSTATIC -> {

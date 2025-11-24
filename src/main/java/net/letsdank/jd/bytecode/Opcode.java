@@ -38,10 +38,25 @@ public enum Opcode {
     // ldc index (u1)
     LDC(0x12, "ldc", OperandType.CONSTPOOL_U1),
 
+    // --- стек ---
+    POP(0x57, "pop"),
+    DUP(0x59, "dup"),
+
     // --- арифметика ---
     IADD(0x60, "iadd"),
-    INEG(0x74, "ineg"),
+    ISUB(0x64, "isub"),
     IMUL(0x68, "imul"),
+    IDIV(0x6C, "idiv"),
+    IREM(0x70, "irem"),
+    INEG(0x74, "ineg"),
+
+    // --- побитовые операции / сдвиги ---
+    ISHL(0x78, "ishl"),
+    ISHR(0x7A, "ishr"),
+    IUSHR(0x7C, "iushr"),
+    IAND(0x7E, "iand"),
+    IOR(0x80, "ior"),
+    IXOR(0x82, "ixor"),
 
     IINC(0x84, "iinc", OperandType.IINC),
 
