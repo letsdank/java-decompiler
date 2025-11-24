@@ -286,6 +286,29 @@ public final class KotlinPrettyPrinter {
     }
 
     private String printSimpleExpr(Expr expr) {
+        if(expr instanceof CastExpr c) {
+            // Kotlin cast: expr as Type
+            return printExpr(c.value()) + " as " + c.typeName();
+        }
+        if (expr instanceof InstanceOfExpr io){
+            // Kotlin instanceof: expr is Type
+            return printExpr(io.value()) + " is " + io.typeName();
+        }
+        if(expr instanceof NewArrayExpr na) {
+            // Базовый вариант: new T[n] -> Array<T>(n) можно улучшать позже
+            // Пока оставим Java-стиль, чтобы не поломать ничего:
+            return na.toString();
+        }
+        if(expr instanceof ArrayAccessExpr aa) {
+            // У Kotlin доступ к массиву такой же, как в Java
+            return printExpr(aa.array()) + "[" + printExpr(aa.index()) + "]";
+        }
+        if(expr instanceof ArrayLengthExpr al) {
+            // В Kotlin длина массива: arr.size, но arr.length тоже допустимо в байткодных паттернах.
+            // Для красоты можно сделать size:
+            return printExpr(al.array()) + ".size";
+        }
+
         return expr.toString();
     }
 
