@@ -167,6 +167,12 @@ public final class ExpressionBuilder {
                         if (e instanceof CpString s) {
                             String text = cp.getUtf8(s.stringIndex());
                             stack.push(new StringLiteralExpr(text));
+                        } else if (e instanceof CpClass cls) {
+                            // ldc <SomeClass> -> Class-литерал
+                            String internalName = cp.getClassName(cpi.cpIndex());
+                            // Самый простой вариант - представить это как строку,
+                            // чтобы не падать и хоть как-то отобразить:
+                            stack.push(new StringLiteralExpr(internalName));
                         }
                     }
                     case GETSTATIC -> {
