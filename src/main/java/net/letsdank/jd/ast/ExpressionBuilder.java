@@ -716,6 +716,22 @@ public final class ExpressionBuilder {
                     case ALOAD_2 -> stack.push(varExpr(2));
                     case ALOAD_3 -> stack.push(varExpr(3));
 
+                    // длина массива
+                    case ARRAYLENGTH -> {
+                        Expr array = stack.pop();
+                        stack.push(new ArrayLengthExpr(array));
+                    }
+                    case POP -> {
+                        if (!stack.isEmpty()) {
+                            stack.pop();
+                        }
+                    }
+                    case DUP -> {
+                        if (!stack.isEmpty()) {
+                            stack.push(stack.peek());
+                        }
+                    }
+
                     default -> {
                     }
                 }
