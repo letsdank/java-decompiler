@@ -31,6 +31,26 @@ public enum Opcode {
     DLOAD_2(0x28, "dload_2"),
     DLOAD_3(0x29, "dload_3"),
 
+    // --- array load ---
+    IALOAD(0x2E, "iaload"),
+    LALOAD(0x2F, "laload"),
+    FALOAD(0x30, "faload"),
+    DALOAD(0x31, "daload"),
+    AALOAD(0x32, "aaload"),
+    BALOAD(0x33, "baload"),
+    CALOAD(0x34, "caload"),
+    SALOAD(0x35, "saload"),
+
+    // --- array store ---
+    IASTORE(0x4F, "iastore"),
+    LASTORE(0x50, "lastore"),
+    FASTORE(0x51, "fastore"),
+    DASTORE(0x52, "dastore"),
+    AASTORE(0x53, "aastore"),
+    BASTORE(0x54, "bastore"),
+    CASTORE(0x55, "castore"),
+    SASTORE(0x56, "aastore"),
+
     ALOAD(0x19, "aload", OperandType.LOCAL_INDEX_U1),
     ALOAD_0(0x2A, "aload_0"),
     ALOAD_1(0x2B, "aload_1"),
@@ -139,6 +159,11 @@ public enum Opcode {
 
     // --- создание объектов ---
     NEW(0xBB, "new", OperandType.CONSTPOOL_U2),
+
+    // массивы
+    NEWARRAY(0xBC, "newarray", OperandType.BYTE_IMM), // typecode:u1
+    ANEWARRAY(0xBD, "anewarray", OperandType.CONSTPOOL_U2),
+    ARRAYLENGTH(0xBE, "arraylength"),
 
     // --- проверки типов ---
     CHECKCAST(0xC0, "checkcast", OperandType.CONSTPOOL_U2),

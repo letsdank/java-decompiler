@@ -79,8 +79,8 @@ public final class ExpressionBuilder {
                         stack.push(new BinaryExpr("%", left, right));
                     }
                     case INEG -> {
-                        Expr v = stack.pop();
-                        stack.push(new UnaryExpr("-", v));
+                        Expr value = stack.pop();
+                        stack.push(new UnaryExpr("-", value));
                     }
 
                     // побитовые операции
@@ -119,24 +119,24 @@ public final class ExpressionBuilder {
 
                     // возвраты
                     case IRETURN -> {
-                        Expr v = stack.pop();
-                        block.add(new ReturnStmt(v));
+                        Expr value = stack.pop();
+                        block.add(new ReturnStmt(value));
                     }
                     case LRETURN -> {
-                        Expr v = stack.pop();
-                        block.add(new ReturnStmt(v));
+                        Expr value = stack.pop();
+                        block.add(new ReturnStmt(value));
                     }
                     case FRETURN -> {
-                        Expr v = stack.pop();
-                        block.add(new ReturnStmt(v));
+                        Expr value = stack.pop();
+                        block.add(new ReturnStmt(value));
                     }
                     case DRETURN -> {
-                        Expr v = stack.pop();
-                        block.add(new ReturnStmt(v));
+                        Expr value = stack.pop();
+                        block.add(new ReturnStmt(value));
                     }
                     case ARETURN -> {
-                        Expr v = stack.pop();
-                        block.add(new ReturnStmt(v));
+                        Expr value = stack.pop();
+                        block.add(new ReturnStmt(value));
                     }
                     case RETURN -> {
                         block.add(new ReturnStmt(null));
@@ -174,6 +174,30 @@ public final class ExpressionBuilder {
                     case DLOAD_1 -> stack.push(varExpr(1));
                     case DLOAD_2 -> stack.push(varExpr(2));
                     case DLOAD_3 -> stack.push(varExpr(3));
+
+                    // --- чтение из массива ---
+                    case IALOAD, LALOAD, FALOAD, DALOAD,
+                         AALOAD, BALOAD, CALOAD, SALOAD -> {
+                        Expr index = stack.pop();
+                        Expr array = stack.pop();
+                        stack.push(new ArrayAccessExpr(array, index));
+                    }
+
+                    // --- запись в массив ---
+                    case IASTORE, LASTORE, FASTORE, DASTORE,
+                         AASTORE, BASTORE, CASTORE, SASTORE -> {
+                        Expr value = stack.pop();
+                        Expr index = stack.pop();
+                        Expr array = stack.pop();
+                        ArrayAccessExpr target = new ArrayAccessExpr(array, index);
+                        block.add(new AssignStmt(target, value));
+                    }
+
+                    // --- длина массива ---
+                    case ARRAYLENGTH -> {
+                        Expr array = stack.pop();
+                        stack.push(new ArrayLengthExpr(array));
+                    }
 
                     // ссылочные локалки без операнда: aload_0..3
                     case ALOAD_0 -> stack.push(varExpr(0));
@@ -263,8 +287,8 @@ public final class ExpressionBuilder {
                     case DUP -> {
                         // дублируем верхушку стека
                         if (!stack.isEmpty()) {
-                            Expr v = stack.peek();
-                            stack.push(v);
+                            Expr value = stack.peek();
+                            stack.push(value);
                         }
                     }
 
@@ -276,6 +300,12 @@ public final class ExpressionBuilder {
                 switch (io.opcode()) {
                     // bipush / sipush -> константные int
                     case BIPUSH, SIPUSH -> stack.push(new IntConstExpr(io.operand()));
+                    case NEWARRAY -> {
+                        Expr size = stack.pop();
+                        int typeCode = io.operand();
+                        String elemType = mapNewArrayType(typeCode);
+                        stack.push(new NewArrayExpr(elemType,size));
+                    }
                     default -> {
                         // другие инструкции с immediate пока игнорируем
                     }
@@ -311,17 +341,17 @@ public final class ExpressionBuilder {
                 switch (cpi.opcode()) {
                     case LDC -> {
                         // ldc #idx -> константа из constant pool
-                        CpInfo e = cp.entry(cpi.cpIndex());
-                        if (e instanceof CpString s) {
+                        CpInfo entry = cp.entry(cpi.cpIndex());
+                        if (entry instanceof CpString s) {
                             String text = cp.getUtf8(s.stringIndex());
                             stack.push(new StringLiteralExpr(text));
-                        } else if (e instanceof CpClass cls) {
+                        } else if (entry instanceof CpClass cls) {
                             // ldc <SomeClass> -> Class-литерал
                             String internalName = cp.getClassName(cpi.cpIndex());
                             // Самый простой вариант - представить это как строку,
                             // чтобы не падать и хоть как-то отобразить:
                             stack.push(new StringLiteralExpr(internalName));
-                        } else if (e instanceof CpInteger i) {
+                        } else if (entry instanceof CpInteger i) {
                             int value = i.value();
                             stack.push(new IntConstExpr(value));
                         }
@@ -464,6 +494,8 @@ public final class ExpressionBuilder {
                         }
                     }
                     case INVOKEDYNAMIC -> {
+                        // TODO: почему это было вынесено отдельно?
+                        //  может остальные опкоды в ConstantPool тоже стоит вынести?
                         handleInvokeDynamic(stack, block, cpi);
                     }
                     case GETFIELD -> {
@@ -489,8 +521,8 @@ public final class ExpressionBuilder {
                     }
                     case NEW -> {
                         // NEW #idx -> CONSTANT_Class
-                        CpInfo e = cp.entry(cpi.cpIndex());
-                        if (e instanceof CpClass cls) {
+                        CpInfo entry = cp.entry(cpi.cpIndex());
+                        if (entry instanceof CpClass cls) {
                             String ownerInternal = cp.getClassName(cpi.cpIndex());
                             // Кладем маркер "неинициализированный объект"
                             stack.push(new UninitializedNewExpr(ownerInternal));
@@ -509,6 +541,13 @@ public final class ExpressionBuilder {
                         String typeName = internalName.replace('/', '.');
                         Expr value = stack.pop();
                         stack.push(new InstanceOfExpr(value, typeName));
+                    }
+                    case ANEWARRAY -> {
+                        // stack: ..., size
+                        Expr size = stack.pop();
+                        String internalName = cp.getClassName(cpi.cpIndex());
+                        String typeName = internalName.replace('/','.');
+                        stack.push(new NewArrayExpr(typeName,size));
                     }
                     default -> {
                         // остальные инструкции с cp пока игнорируем
@@ -598,6 +637,29 @@ public final class ExpressionBuilder {
         String name = cp.getUtf8(nt.nameIndex());
         // Представим как обычный "глобальный" вызов: name(arg1, arg2)
         return new CallExpr(null, null, name, List.copyOf(args));
+    }
+
+    private String mapNewArrayType(int typeCode) {
+        // JVM spec:
+        // 4=boolean
+        // 5=char
+        // 6=float
+        // 7=double
+        // 8=byte
+        // 9=short
+        // 10=int
+        // 11=long
+        return switch (typeCode) {
+            case 4 -> "boolean";
+            case 5 -> "char";
+            case 6 -> "float";
+            case 7 -> "double";
+            case 8 -> "byte";
+            case 9 -> "short";
+            case 10 -> "int";
+            case 11 -> "long";
+            default -> "/*unknown*/int";
+        };
     }
 
     private VarExpr varExpr(int index) {
