@@ -51,8 +51,17 @@ public final class KotlinLanguageBackend implements LanguageBackend {
     public String decompileClass(ClassFile cf, MethodDecompiler methodDecompiler) {
         KotlinMetadataReader.KotlinClassModel model = KotlinMetadataReader.readClassModel(cf);
 
-        if (model.kind() == KotlinMetadataReader.KotlinClassModel.Kind.FILE_FACADE) {
-            // TODO: поменять на нашу модель
+        boolean looksLikeFileFacade = model.kind() == KotlinMetadataReader.KotlinClassModel.Kind.FILE_FACADE;
+        if (!looksLikeFileFacade) {
+            String simple = cf.thisClassFqn();
+            int lastDot = simple.lastIndexOf('.');
+            if (lastDot >= 0) simple = simple.substring(lastDot + 1);
+            if (simple.endsWith("Kt") && model.hasMetadata()) {
+                looksLikeFileFacade = true;
+            }
+        }
+
+        if (looksLikeFileFacade) {
             return decompileFileFacade(cf, methodDecompiler, model);
         }
 
@@ -419,15 +428,29 @@ public final class KotlinLanguageBackend implements LanguageBackend {
     private boolean shouldSkipKotlinSynthMethod(ClassFile cf, MethodInfo method) {
         ConstantPool cp = cf.constantPool();
         String name = cp.getUtf8(method.nameIndex());
+        String desc = cp.getUtf8(method.descriptorIndex());
 
-        if ("<init>".equals(name)) return true;
-        if ("<clinit>".equals(name)) return true;
+        // Конструкторы и <clinit>
+        if ("<init>".equals(name) || "<clinit>".equals(name)) return true;
+
+        // Data-class helpers
         if (name.startsWith("component")) return true;
-        if (name.equals("copy")) return true;
-        if (name.equals("copy$default")) return true;
-        if (name.equals("equals")) return true;
-        if (name.equals("hashCode")) return true;
-        if (name.equals("toString")) return true;
+        if ("copy".equals(name) || "copy$default".equals(name)) return true;
+        if ("equals".equals(name) || "hashCode".equals(name) || "toString".equals(name)) return true;
+
+        // Enum helpers
+        if ("values".equals(name) && desc.startsWith("()[L") && desc.endsWith(";")) return true;
+        if ("valueOf".equals(name) && desc.startsWith("(Ljava/lang/String;)")) return true;
+        if ("$values".equals(name) && desc.startsWith("()[L") && desc.endsWith(";")) return true;
+        if ("getEntries".equals(name) && desc.contains("EnumEntries")) return true;
+
+        // Kotlin synthetic bridges
+        if (name.startsWith("access$")) return true;
+        if (name.endsWith("$annotations")) return true;
+
+        // Inline / value-class impl methods
+        if (name.endsWith("-impl") || name.endsWith("-impl0")) return true;
+
         return false;
     }
 

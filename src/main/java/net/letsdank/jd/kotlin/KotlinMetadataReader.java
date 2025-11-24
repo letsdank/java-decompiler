@@ -53,7 +53,8 @@ public final class KotlinMetadataReader {
     public record KotlinClassModel(String internalName, Kind kind, boolean isKotlinClass,
                                    boolean hasMetadata, boolean isDataClass, boolean isSealedClass,
                                    boolean isEnumClass, boolean isObjectClass, boolean isValueClass,
-                                   List<KotlinPropertyModel> properties) {
+                                   List<KotlinPropertyModel> properties,
+                                   List<String> enumEntries) {
         public enum Kind {
             CLASS,
             FILE_FACADE,
