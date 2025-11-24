@@ -1,20 +1,17 @@
 package net.letsdank.jd.lang;
 
-import kotlin.metadata.KmClass;
-import kotlin.metadata.KmPackage;
-import kotlin.metadata.KmProperty;
-import kotlin.metadata.jvm.KotlinClassMetadata;
-import net.letsdank.jd.ast.*;
-import net.letsdank.jd.kotlin.KotlinMetadataExtractor;
+import net.letsdank.jd.ast.DecompilerOptions;
+import net.letsdank.jd.ast.KotlinPrettyPrinter;
+import net.letsdank.jd.ast.MethodAst;
+import net.letsdank.jd.ast.MethodDecompiler;
 import net.letsdank.jd.kotlin.KotlinMetadataReader;
 import net.letsdank.jd.kotlin.KotlinPropertyRegistry;
-import net.letsdank.jd.kotlin.MetadataFlagsKt;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
 
-import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -52,51 +49,45 @@ public final class KotlinLanguageBackend implements LanguageBackend {
 
     @Override
     public String decompileClass(ClassFile cf, MethodDecompiler methodDecompiler) {
-        KotlinClassMetadata metadata = KotlinMetadataExtractor.extractFromClassFile(cf);
+        KotlinMetadataReader.KotlinClassModel model = KotlinMetadataReader.readClassModel(cf);
 
-        if (metadata instanceof KotlinClassMetadata.FileFacade fileFacadeMeta) {
-            // Это file facade: SampleKotlinKt - печатаем top-level функции
-            return decompileFileFacade(cf, methodDecompiler, fileFacadeMeta);
-        } else if (metadata instanceof KotlinClassMetadata.Class classMeta) {
-            // Обычный Kotlin-класс (в том числе data class)
-            String dataClassResult = tryDecompileDataClass(cf, methodDecompiler, classMeta);
-            if (dataClassResult != null) return dataClassResult;
-            return decompileKotlinClass(cf, methodDecompiler, classMeta);
-        } else {
-            // Нет метаданных или какой-то другой вид - используем простой fallback
-            return decompileAsPlainKotlin(cf, methodDecompiler);
+        if (model.kind() == KotlinMetadataReader.KotlinClassModel.Kind.FILE_FACADE) {
+            // TODO: поменять на нашу модель
+            return decompileFileFacade(cf, methodDecompiler, model);
         }
+
+        // data class на основе модели
+        String dataClassResult = tryDecompileDataClass(cf, methodDecompiler, model);
+        if (dataClassResult != null) return dataClassResult;
+
+        // Нет метаданных или какой-то другой вид - используем простой fallback
+        return decompileKotlinClass(cf, methodDecompiler, model);
     }
 
     private String decompileFileFacade(ClassFile cf, MethodDecompiler decompiler,
-                                       KotlinClassMetadata.FileFacade meta) {
+                                       KotlinMetadataReader.KotlinClassModel model) {
         StringBuilder out = new StringBuilder();
 
         // Можно попытаться вывести package, если он есть (через ClassFile или через KmPackage)
-        KmPackage kmPackage = meta.getKmPackage();
-        String pkg = cf.thisClassFqn();
-        int lastDot = pkg.lastIndexOf('.');
+        String fqn = cf.thisClassFqn();
+        String pkg = null;
+        int lastDot = fqn.lastIndexOf('.');
         if (lastDot >= 0) {
-            pkg = pkg.substring(0, lastDot);
+            pkg = fqn.substring(0, lastDot);
+        }
+
+        if (pkg != null && !pkg.isEmpty()) {
             out.append("package ").append(pkg).append("\n\n");
         }
 
-        // Собираем свойства из KmPackage
-        List<KmProperty> kmProps = kmPackage.getProperties();
-        List<KotlinPropertyModel> properties = new ArrayList<>();
-        for (KmProperty p : kmProps) {
-            String name = p.getName();
-            String type = KotlinTypeUtils.kmTypeToKotlin(p.getReturnType());
-            boolean isVar = MetadataFlagsKt.isVarProperty(p);
-            properties.add(new KotlinPropertyModel(name, type, isVar, true));
+        // Собираем свойства из модели; для file facade они должны быть top-level
+        List<KotlinMetadataReader.KotlinPropertyModel> properties = model.properties();
+
+        Set<String> propertyNames = new LinkedHashSet<>();
+        for (KotlinMetadataReader.KotlinPropertyModel p : properties) {
+            propertyNames.add(p.name());
         }
 
-        // Собираем список имен свойств для принтера, чтобы он мог знать,
-        // какие getX()/isX() относятся к настоящим Kotlin-свойствам из метаданных
-        Set<String> propertyNames = new HashSet<>();
-        for (KotlinPropertyModel p : properties) {
-            propertyNames.add(p.name);
-        }
         String ownerInternal = cf.thisClassInternalName();
 
         // Регистрируем свойства файла в глобальном реестре
@@ -110,13 +101,15 @@ public final class KotlinLanguageBackend implements LanguageBackend {
                 .append("\n\n");
 
         // Печатаем top-level свойства
-        for (KotlinPropertyModel p : properties) {
-            String varOrVal = p.isVar ? "var" : "val";
+        for (KotlinMetadataReader.KotlinPropertyModel p : properties) {
+            if (!p.isTopLevel()) continue;
+
+            String varOrVal = p.isVar() ? "var" : "val";
             out.append(varOrVal)
                     .append(" ")
-                    .append(p.name)
+                    .append(p.name())
                     .append(": ")
-                    .append(p.type)
+                    .append(p.type())
                     .append("\n");
         }
 
@@ -124,7 +117,10 @@ public final class KotlinLanguageBackend implements LanguageBackend {
             out.append("\n");
         }
 
+        // Печатаем top-level функции
         for (MethodInfo method : cf.methods()) {
+            if (shouldSkipKotlinSynthMethod(cf, method)) continue;
+
             MethodAst ast = decompiler.decompile(method, cf);
             String methodText = printer.printMethod(cf, method, ast);
             out.append(methodText).append("\n\n");
@@ -133,9 +129,9 @@ public final class KotlinLanguageBackend implements LanguageBackend {
         return out.toString();
     }
 
-    private String decompileKotlinClass(ClassFile cf, MethodDecompiler decompiler, KotlinClassMetadata.Class classMeta) {
+    private String decompileKotlinClass(ClassFile cf, MethodDecompiler decompiler,
+                                        KotlinMetadataReader.KotlinClassModel model) {
         StringBuilder out = new StringBuilder();
-        KmClass kmClass = classMeta.getKmClass();
 
         // Вычисляем package и простое имя по FQN class-файла
         String fqn = cf.thisClassFqn();
@@ -151,76 +147,20 @@ public final class KotlinLanguageBackend implements LanguageBackend {
             out.append("package ").append(pkg).append("\n\n");
         }
 
-        // Свойства класса из KmClass
-        List<KmProperty> kmProps = kmClass.getProperties();
-        List<KotlinPropertyModel> properties = new ArrayList<>();
-        for (KmProperty p : kmProps) {
-            String name = p.getName();
-            String type = KotlinTypeUtils.kmTypeToKotlin(p.getReturnType());
-            boolean isVar = MetadataFlagsKt.isVarProperty(p);
-            properties.add(new KotlinPropertyModel(name, type, isVar, false));
-        }
+        boolean isEnum = model.isEnumClass();
+        boolean isObject = model.isObjectClass();
+        boolean isValue = model.isValueClass();
+        boolean isSealed = model.isSealedClass();
+        boolean isData = model.isDataClass();
 
-        // Имена свойств для принтера (используем только имена, без эвристики на getX)
-        Set<String> propertyNames = new HashSet<>();
-        for (KotlinPropertyModel p : properties) {
-            propertyNames.add(p.name);
-        }
-
-        // Регистрируем свойства этого класса в глобальном реестре
-        String ownerInternal = cf.thisClassInternalName();
-        KotlinPropertyRegistry.register(ownerInternal, propertyNames);
-
-        // AccessNames - для фильтрации getter/setter в этом же классе
-        PropertyAccessNames accessNames = buildPropertyAccessNames(propertyNames);
-
-        // Принтер с набором имен свойств
-        KotlinPrettyPrinter printer = new KotlinPrettyPrinter(propertyNames);
-
-        // Companion: SampleService$Companion -> class SampleService { companion object { ... } }
-        boolean isCompanionLike = simpleName.endsWith("$Companion");
-        if (isCompanionLike) {
-            String owner = simpleName.substring(0, simpleName.length() - "$Companion".length());
-
-            out.append("class ").append(owner).append(" {\n\n");
-            out.append("    companion owner {\n\n");
-
-            for (MethodInfo method : cf.methods()) {
-                if (shouldSkipKotlinSynthMethod(cf, method)) continue;
-                MethodAst ast = decompiler.decompile(method, cf);
-                String methodText = printer.printMethod(cf, method, ast);
-                // методы компаньона - на один уровень глубже
-                out.append(indent(indent(methodText))).append("\n\n");
-            }
-
-            out.append("    }\n");
-            out.append("}\n");
-            return out.toString();
-        }
-
-        // Не companion: определяем вид класса
-        boolean isEnum = MetadataFlagsKt.isEnumClass(kmClass);
-        boolean isObject = MetadataFlagsKt.isObjectClass(kmClass);
-        boolean isValue = MetadataFlagsKt.isValueClass(kmClass);
-        boolean isData = MetadataFlagsKt.isDataClass(kmClass);
-        boolean isSealed = MetadataFlagsKt.isSealedClass(kmClass);
+        KotlinPrettyPrinter printer = new KotlinPrettyPrinter();
 
         if (isEnum) {
             // enum class
             out.append("enum class ").append(simpleName).append(" {\n");
 
             // enum entries (CONSTANT1, CONSTANT2, ...)
-            List<String> entries = MetadataFlagsKt.enumEntries(kmClass);
-            if (!entries.isEmpty()) {
-                for (int i = 0; i < entries.size(); i++) {
-                    out.append("    ").append(entries.get(i));
-                    if (i + 1 < entries.size()) {
-                        out.append(",");
-                    }
-                    out.append("\n");
-                }
-                out.append("\n");
-            }
+            // TODO: enum entries
 
             // методы enum-а
             for (MethodInfo method : cf.methods()) {
@@ -267,18 +207,30 @@ public final class KotlinLanguageBackend implements LanguageBackend {
 
         out.append(header).append(simpleName).append(" {\n\n");
 
-        // Печатаем top-level свойства
-        for (KotlinPropertyModel p : properties) {
-            String varOrVal = p.isVar ? "var" : "val";
+        // свойства берем из model.properties()
+        for (KotlinMetadataReader.KotlinPropertyModel p : model.properties()) {
+            // пропускаем top-level, если вдруг туда попали
+            if (p.isTopLevel()) continue;
+
+            String varOrVal = p.isVar() ? "var" : "val";
             out.append(varOrVal)
                     .append(" ")
-                    .append(p.name)
+                    .append(p.name())
                     .append(": ")
-                    .append(p.type)
+                    .append(p.type())
                     .append("\n");
         }
 
-        if (!properties.isEmpty()) {
+        // Собираем имена свойств для фильтрации геттеров/сеттеров
+        Set<String> propertyNames = new LinkedHashSet<>();
+        for (KotlinMetadataReader.KotlinPropertyModel p : model.properties()) {
+            if (p.isTopLevel()) continue;
+            propertyNames.add(p.name());
+        }
+
+        PropertyAccessNames accessNames = buildPropertyAccessNames(propertyNames);
+
+        if (!model.properties().isEmpty()) {
             out.append("\n");
         }
 
@@ -303,31 +255,17 @@ public final class KotlinLanguageBackend implements LanguageBackend {
         return out.toString();
     }
 
-    private String tryDecompileDataClass(ClassFile cf, MethodDecompiler decompiler, KotlinClassMetadata.Class classMeta) {
-        KmClass km = classMeta.getKmClass();
-
-        // 1. Проверяем, что это действительно data class
-        if (!MetadataFlagsKt.isDataClass(km)) {
+    private String tryDecompileDataClass(ClassFile cf, MethodDecompiler decompiler,
+                                         KotlinMetadataReader.KotlinClassModel model) {
+        // Без читаемой метадаты безопаснее НЕ пытаться собирать data class
+        if (!model.hasMetadata() || !model.isDataClass()) {
             return null;
         }
 
-        // 2. Собираем свойства primary-конструктора
-        List<KmProperty> properties = km.getProperties();
-        if (properties.isEmpty()) {
-            // На всякий случай: странный "data class" без свойств - отдадим обработку дальше
-            return null;
-        }
+        List<KotlinMetadataReader.KotlinPropertyModel> props = model.properties();
+        if (props.isEmpty()) return null;
 
-        // Регистрируем свойства этого data class в глобальном реестре
-        String ownerInternal = cf.thisClassInternalName();
-
-        Set<String> propertyNames = new HashSet<>();
-        for (KmProperty p : properties) {
-            propertyNames.add(p.getName()); // "id", "name"
-        }
-        KotlinPropertyRegistry.register(ownerInternal, propertyNames);
-
-        // 3. Вычисляем имя класса
+        // FQN -> package + simpleName
         String fqn = cf.thisClassFqn();
         String pkg = null;
         String simpleName = fqn;
@@ -339,38 +277,28 @@ public final class KotlinLanguageBackend implements LanguageBackend {
 
         StringBuilder out = new StringBuilder();
 
-        // Пакет
         if (pkg != null && !pkg.isEmpty()) {
             out.append("package ").append(pkg).append("\n\n");
         }
 
-        // Заголовок data class
         out.append("data class ").append(simpleName).append("(\n");
 
-        for (int i = 0; i < properties.size(); i++) {
-            KmProperty p = properties.get(i);
-            String name = p.getName();
-
-            // val / var - по metadata
-            boolean isVar = MetadataFlagsKt.isVarProperty(p);
-            String varOrVal = isVar ? "var" : "val";
-
-            // Красивый Kotlin-тип из KmType
-            String type = KotlinTypeUtils.kmTypeToKotlin(p.getReturnType());
+        for (int i = 0; i < props.size(); i++) {
+            KotlinMetadataReader.KotlinPropertyModel p = props.get(i);
+            String varOrVal = p.isVar() ? "var" : "val";
 
             out.append("    ")
                     .append(varOrVal).append(" ")
-                    .append(name).append(": ")
-                    .append(type);
+                    .append(p.name()).append(": ")
+                    .append(p.type());
 
-            if (i + 1 < properties.size()) {
+            if (i + 1 < props.size()) {
                 out.append(",");
             }
             out.append("\n");
         }
 
         out.append(")\n");
-
         return out.toString();
     }
 
@@ -483,20 +411,6 @@ public final class KotlinLanguageBackend implements LanguageBackend {
             pan.setterNames.add("set" + cap);
         }
         return pan;
-    }
-
-    private static final class KotlinPropertyModel {
-        final String name;          // имя свойства в Kotlin (user, greeting, count)
-        final String type;          // отрендеренный тип (String, Int, User, List<String>...)
-        final boolean isVar;        // var или val
-        final boolean isTopLevel;   // top-level (file facade) или член класса
-
-        KotlinPropertyModel(String name, String type, boolean isVar, boolean isTopLevel) {
-            this.name = name;
-            this.type = type;
-            this.isVar = isVar;
-            this.isTopLevel = isTopLevel;
-        }
     }
 
     private static class PropertyAccessNames {
