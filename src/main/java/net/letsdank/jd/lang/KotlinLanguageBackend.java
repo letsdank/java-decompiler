@@ -160,7 +160,17 @@ public final class KotlinLanguageBackend implements LanguageBackend {
             out.append("enum class ").append(simpleName).append(" {\n");
 
             // enum entries (CONSTANT1, CONSTANT2, ...)
-            // TODO: enum entries
+            List<String> enumEntries = model.enumEntries();
+            if (enumEntries != null && !enumEntries.isEmpty()) {
+                for (int i = 0; i < enumEntries.size(); i++) {
+                    out.append("    ").append(enumEntries.get(i));
+                    if (i + 1 < enumEntries.size()) {
+                        out.append(",");
+                    }
+                    out.append("\n");
+                }
+            }
+            out.append("\n");
 
             // методы enum-а
             for (MethodInfo method : cf.methods()) {
@@ -176,6 +186,26 @@ public final class KotlinLanguageBackend implements LanguageBackend {
 
         if (isObject) {
             // object Foo { ... }
+            boolean looksLikeCompanion = "Companion".equals(simpleName) &&
+                    fqn.contains("$");
+            String outerClassSimpleName = null;
+            if (looksLikeCompanion) {
+                int dollar = fqn.lastIndexOf('$');
+                if (dollar > 0) {
+                    String outerFqn = fqn.substring(0, dollar);
+                    int lastOuterDot = outerFqn.lastIndexOf('.');
+                    if (lastOuterDot >= 0 && lastOuterDot + 1 < outerFqn.length()) {
+                        outerClassSimpleName = outerFqn.substring(lastOuterDot + 1);
+                    } else {
+                        outerClassSimpleName = outerFqn;
+                    }
+                }
+            }
+
+            if (looksLikeCompanion && outerClassSimpleName != null) {
+                out.append("// companion object of ").append(outerClassSimpleName).append("\n");
+            }
+
             out.append("object ").append(simpleName).append(" {\n\n");
 
             for (MethodInfo method : cf.methods()) {
@@ -268,6 +298,19 @@ public final class KotlinLanguageBackend implements LanguageBackend {
 
         List<KotlinMetadataReader.KotlinPropertyModel> props = model.properties();
         if (props.isEmpty()) return null;
+
+        // Регистрируем свойства data class в глобальном реестре, чтобы другие классы
+        // могли печатать user.name вместо user.getName()
+        Set<String> propertyNames = new LinkedHashSet<>();
+        for (KotlinMetadataReader.KotlinPropertyModel p : props) {
+            // на всякий случае игнорируем top-level (для data class их быть не должно)
+            if (!p.isTopLevel()) {
+                propertyNames.add(p.name());
+            }
+        }
+
+        String ownerInternal = cf.thisClassInternalName();
+        KotlinPropertyRegistry.register(ownerInternal, propertyNames);
 
         // FQN -> package + simpleName
         String fqn = cf.thisClassFqn();

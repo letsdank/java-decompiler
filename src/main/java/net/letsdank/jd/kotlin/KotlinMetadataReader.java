@@ -5,7 +5,6 @@ import kotlin.metadata.KmPackage;
 import kotlin.metadata.KmProperty;
 import kotlin.metadata.jvm.KotlinClassMetadata;
 import net.letsdank.jd.ast.DecompilerOptions;
-import net.letsdank.jd.ast.KotlinTypeUtils;
 import net.letsdank.jd.lang.KotlinClassDetector;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.ConstantPool;
@@ -113,6 +112,7 @@ public final class KotlinMetadataReader {
         boolean isEnum = false;
         boolean isObject = false;
         boolean isValue = false;
+        List<String> enumEntries = null;
 
         // 1. Метадата прочиталась -> используем ее
         if (metadata instanceof KotlinClassMetadata.Class classMeta) {
@@ -129,10 +129,14 @@ public final class KotlinMetadataReader {
             List<KmProperty> kmProps = kmClass.getProperties();
             for (KmProperty p : kmProps) {
                 String name = p.getName();
-                String type = KotlinTypeUtils.kmTypeToKotlin(p.getReturnType());
+                String type = KotlinTypePrinterKt.renderKotlinType(p.getReturnType());
                 boolean isVar = MetadataFlagsKt.isVarProperty(p);
                 props.add(new KotlinPropertyModel(name, type, isVar, false));
             }
+
+            enumEntries = MetadataFlagsKt.enumEntries(kmClass);
+            // на всякий случай делаем неизменяемый список
+            enumEntries = List.copyOf(enumEntries);
         } else if (metadata instanceof KotlinClassMetadata.FileFacade fileFacadeMeta) {
             kind = KotlinClassModel.Kind.FILE_FACADE;
 
@@ -140,7 +144,7 @@ public final class KotlinMetadataReader {
             List<KmProperty> kmProps = kmPackage.getProperties();
             for (KmProperty p : kmProps) {
                 String name = p.getName();
-                String type = KotlinTypeUtils.kmTypeToKotlin(p.getReturnType());
+                String type = KotlinTypePrinterKt.renderKotlinType(p.getReturnType());
                 boolean isVar = MetadataFlagsKt.isVarProperty(p);
                 props.add(new KotlinPropertyModel(name, type, isVar, true));
             }
@@ -152,7 +156,7 @@ public final class KotlinMetadataReader {
         }
 
         return new KotlinClassModel(internalName, kind, isKotlin, hasMetadata,
-                isData, isSealed, isEnum, isObject, isValue, props);
+                isData, isSealed, isEnum, isObject, isValue, props, enumEntries);
     }
 
     /**

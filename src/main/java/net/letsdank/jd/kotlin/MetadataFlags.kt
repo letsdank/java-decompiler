@@ -51,8 +51,11 @@ fun isValueClass(kmClass: KmClass): Boolean =
 fun classKind(kmClass: KmClass): ClassKind =
     kmClass.kind
 
-fun enumEntries(kmClass: KmClass): List<String> =
-    kmClass.enumEntries
+fun enumEntries(kmClass: KmClass): List<String> {
+    // В новых версиях KmClass уже есть список enumEntries
+    val entries: List<KmEnumEntry> = kmClass.kmEnumEntries
+    return entries.map { it.name }
+}
 
 /** sealed subclasses (FQ-имена наследников sealed-класса) */
 fun sealedSubclasses(kmClass: KmClass): List<String> =
