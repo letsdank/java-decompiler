@@ -47,7 +47,13 @@ public final class MethodDecompiler {
             return new MethodAst(name, desc, new BlockStmt());
         }
 
-        LocalNameProvider localNames = new MethodLocalNameProvider(method.accessFlags(), desc);
+        LocalNameProvider baseNames = new MethodLocalNameProvider(method.accessFlags(), desc);
+        LocalNameProvider localNames = baseNames;
+
+        // если есть LocalVariableTable - накрываем debug-именами
+        if (codeAttr.localVariableAttribute() != null) {
+            localNames = new LocalVariableNameProvider(baseNames, codeAttr.localVariableAttribute(), cp);
+        }
 
         byte[] code = codeAttr.code();
 
