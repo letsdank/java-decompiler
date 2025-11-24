@@ -232,12 +232,14 @@ public final class ClassFileReader {
 
             // exception_table
             int exceptionTableLength = in.readU2();
-            // просто пролистываем
+            List<CodeAttribute.ExceptionTableEntry> exceptionTable = new ArrayList<>(exceptionTableLength);
             for (int i = 0; i < exceptionTableLength; i++) {
-                in.readU2(); // start_pc
-                in.readU2(); // end_pc
-                in.readU2(); // handler_pc
-                in.readU2(); // catch_type
+                int startPc = in.readU2();
+                int endPc = in.readU2();
+                int handlerPc = in.readU2();
+                int catchTypeIndex = in.readU2();
+                exceptionTable.add(new CodeAttribute.ExceptionTableEntry(
+                        startPc, endPc, handlerPc, catchTypeIndex));
             }
 
             LineNumberTableAttribute lnt = null;
@@ -269,7 +271,7 @@ public final class ClassFileReader {
                 }
             }
 
-            return new CodeAttribute(name, maxStack, maxLocals, code, lnt, lvt);
+            return new CodeAttribute(name, maxStack, maxLocals, code, exceptionTable, lnt, lvt);
         } else if ("RuntimeVisibleAnnotations".equals(name)) {
             // читаем bytes целиком и разбираем уже в отдельном потоке
             byte[] data = new byte[(int) length];
@@ -339,7 +341,7 @@ public final class ClassFileReader {
                 methods[i] = new BootstrapMethodsAttribute.BootstrapMethod(methodRef, args);
             }
 
-            return new BootstrapMethodsAttribute(name,methods);
+            return new BootstrapMethodsAttribute(name, methods);
         } catch (Exception e) {
             // fail-soft, чтобы не завалить все чтение class-файла
             return new BootstrapMethodsAttribute(name, new BootstrapMethodsAttribute.BootstrapMethod[0]);
