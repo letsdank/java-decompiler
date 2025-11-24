@@ -153,7 +153,7 @@ public final class KotlinLanguageBackend implements LanguageBackend {
         boolean isSealed = model.isSealedClass();
         boolean isData = model.isDataClass();
 
-        KotlinPrettyPrinter printer = new KotlinPrettyPrinter();
+        KotlinPrettyPrinter printer = new KotlinPrettyPrinter(model.propertyNames());
 
         if (isEnum) {
             // enum class
@@ -227,6 +227,10 @@ public final class KotlinLanguageBackend implements LanguageBackend {
             if (p.isTopLevel()) continue;
             propertyNames.add(p.name());
         }
+
+        // Регистрируем свойства класса в глобальном реестре
+        String ownerInternal = cf.thisClassInternalName();
+        KotlinPropertyRegistry.register(ownerInternal, propertyNames);
 
         PropertyAccessNames accessNames = buildPropertyAccessNames(propertyNames);
 
@@ -374,6 +378,7 @@ public final class KotlinLanguageBackend implements LanguageBackend {
         String name = cp.getUtf8(method.nameIndex());
 
         if ("<init>".equals(name)) return true;
+        if ("<clinit>".equals(name)) return true;
         if (name.startsWith("component")) return true;
         if (name.equals("copy")) return true;
         if (name.equals("copy$default")) return true;
