@@ -5,5 +5,6 @@ package net.letsdank.jd.ast.expr;
  */
 public sealed interface Expr
         permits IntConstExpr, VarExpr, BinaryExpr, UnaryExpr,
-        CallExpr, FieldAccessExpr, StringLiteralExpr {
+        CallExpr, FieldAccessExpr, StringLiteralExpr,
+        CastExpr, InstanceOfExpr, NewExpr, UninitializedNewExpr {
 }

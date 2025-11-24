@@ -87,38 +87,50 @@ public final class ExpressionBuilder {
                     case IAND -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
-                        stack.push(new BinaryExpr("&",left,right));
+                        stack.push(new BinaryExpr("&", left, right));
                     }
                     case IOR -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
-                        stack.push(new BinaryExpr("|",left,right));
+                        stack.push(new BinaryExpr("|", left, right));
                     }
                     case IXOR -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
-                        stack.push(new BinaryExpr("^",left,right));
+                        stack.push(new BinaryExpr("^", left, right));
                     }
 
                     // сдвиги
                     case ISHL -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
-                        stack.push(new BinaryExpr("<<", left,right));
+                        stack.push(new BinaryExpr("<<", left, right));
                     }
                     case ISHR -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
-                        stack.push(new BinaryExpr(">>",left,right));
+                        stack.push(new BinaryExpr(">>", left, right));
                     }
                     case IUSHR -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
-                        stack.push(new BinaryExpr(">>>", left,right));
+                        stack.push(new BinaryExpr(">>>", left, right));
                     }
 
                     // возвраты
                     case IRETURN -> {
+                        Expr v = stack.pop();
+                        block.add(new ReturnStmt(v));
+                    }
+                    case LRETURN -> {
+                        Expr v = stack.pop();
+                        block.add(new ReturnStmt(v));
+                    }
+                    case FRETURN -> {
+                        Expr v = stack.pop();
+                        block.add(new ReturnStmt(v));
+                    }
+                    case DRETURN -> {
                         Expr v = stack.pop();
                         block.add(new ReturnStmt(v));
                     }
@@ -145,6 +157,24 @@ public final class ExpressionBuilder {
                     case ILOAD_2 -> stack.push(varExpr(2));
                     case ILOAD_3 -> stack.push(varExpr(3));
 
+                    // lload_0..3
+                    case LLOAD_0 -> stack.push(varExpr(0));
+                    case LLOAD_1 -> stack.push(varExpr(1));
+                    case LLOAD_2 -> stack.push(varExpr(2));
+                    case LLOAD_3 -> stack.push(varExpr(3));
+
+                    // fload_0..3
+                    case FLOAD_0 -> stack.push(varExpr(0));
+                    case FLOAD_1 -> stack.push(varExpr(1));
+                    case FLOAD_2 -> stack.push(varExpr(2));
+                    case FLOAD_3 -> stack.push(varExpr(3));
+
+                    // dload_0..3
+                    case DLOAD_0 -> stack.push(varExpr(0));
+                    case DLOAD_1 -> stack.push(varExpr(1));
+                    case DLOAD_2 -> stack.push(varExpr(2));
+                    case DLOAD_3 -> stack.push(varExpr(3));
+
                     // ссылочные локалки без операнда: aload_0..3
                     case ALOAD_0 -> stack.push(varExpr(0));
                     case ALOAD_1 -> stack.push(varExpr(1));
@@ -169,16 +199,70 @@ public final class ExpressionBuilder {
                         block.add(new AssignStmt(varExpr(3), value));
                     }
 
+                    // lstore_0..3: присваивание
+                    case LSTORE_0 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(0), value));
+                    }
+                    case LSTORE_1 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(1), value));
+                    }
+                    case LSTORE_2 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(2), value));
+                    }
+                    case LSTORE_3 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(3), value));
+                    }
+
+                    // fstore_0..3: присваивание
+                    case FSTORE_0 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(0), value));
+                    }
+                    case FSTORE_1 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(1), value));
+                    }
+                    case FSTORE_2 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(2), value));
+                    }
+                    case FSTORE_3 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(3), value));
+                    }
+
+                    // dstore_0..3: присваивание
+                    case DSTORE_0 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(0), value));
+                    }
+                    case DSTORE_1 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(1), value));
+                    }
+                    case DSTORE_2 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(2), value));
+                    }
+                    case DSTORE_3 -> {
+                        Expr value = stack.pop();
+                        block.add(new AssignStmt(varExpr(3), value));
+                    }
+
                     // операции со стеком
                     case POP -> {
                         // просто выкидываем верхнее выражение
-                        if(!stack.isEmpty()) {
+                        if (!stack.isEmpty()) {
                             stack.pop();
                         }
                     }
                     case DUP -> {
                         // дублируем верхушку стека
-                        if(!stack.isEmpty()) {
+                        if (!stack.isEmpty()) {
                             Expr v = stack.peek();
                             stack.push(v);
                         }
@@ -199,7 +283,7 @@ public final class ExpressionBuilder {
             } else if (insn instanceof LocalVarInsn lv) {
                 switch (lv.opcode()) {
                     // ILOAD с явным индексом
-                    case ILOAD -> {
+                    case ILOAD, LLOAD, FLOAD, DLOAD -> {
                         int idx = lv.localIndex();
                         stack.push(varExpr(idx));
                     }
@@ -207,13 +291,13 @@ public final class ExpressionBuilder {
                         int idx = lv.localIndex();
                         stack.push(varExpr(idx)); // this, obj, массив и прочие ссылки
                     }
-                    case ISTORE -> {
+                    case ISTORE, LSTORE, FSTORE, DSTORE -> {
                         int idx = lv.localIndex();
                         Expr value = stack.pop();
                         block.add(new AssignStmt(varExpr(idx), value));
                     }
                     default -> {
-                        // istore и т.п. пока не обрабатываем
+                        // остальное пока игнорируем
                     }
                 }
             } else if (insn instanceof JumpInsn) {
@@ -282,6 +366,64 @@ public final class ExpressionBuilder {
                             stack.push(call);
                         }
                     }
+                    case INVOKESPECIAL -> {
+                        String descriptor = resolveMethodDescriptor(cpi.cpIndex());
+                        String methodName = resolveMethodName(cpi.cpIndex());
+                        int argCount = argCountFromDescriptor(descriptor);
+
+                        CpMethodref mr = resolveMethodref(cpi.cpIndex());
+                        String ownerInternal = null;
+                        if (mr != null) {
+                            ownerInternal = cp.getClassName(mr.classIndex());
+                        }
+
+                        // собираем аргументы (последний снятый -> правый)
+                        List<Expr> args = new ArrayList<>(argCount);
+                        for (int i = 0; i < argCount; i++) {
+                            args.add(0, stack.pop());
+                        }
+
+                        // target: либо UninitializedNewExpr (NEW+DUP),
+                        // либо this/super/обычный объект
+                        Expr target = stack.pop();
+
+                        if ("<init>".equals(methodName)) {
+                            // --- КОНСТРУКТОР ---
+
+                            if (target instanceof UninitializedNewExpr une &&
+                                    ownerInternal != null &&
+                                    ownerInternal.equals(une.internalName())) {
+
+                                // Паттерн "NEW X; DUP; ...; INVOKESPECIAL X.<init>"
+                                // После DUP на стеке две копии UninitializedNewExpr.
+                                // Мы только что сняли верхнюю; нижняя еще лежит - уберем ее.
+                                if (!stack.isEmpty() &&
+                                        stack.peek() instanceof UninitializedNewExpr une2 &&
+                                        une2.internalName().equals(une.internalName())) {
+                                    stack.pop();
+                                }
+
+                                String ownerSimple = simpleClassName(ownerInternal);
+                                NewExpr newExpr = new NewExpr(ownerSimple, List.copyOf(args));
+                                // Результат new X(...) остается на стеке
+                                stack.push(newExpr);
+                            } else {
+                                // this(...) или super(...) в конструкторе:
+                                // представим как обычный вызов и запишем как statement
+                                CallExpr call = new CallExpr(target, ownerInternal, "<init>", List.copyOf(args));
+                                block.add(new ExprStmt(call));
+                            }
+                        } else {
+                            // Обычный INVOKESPECIAL (private, super.method())
+                            CallExpr call = new CallExpr(target, ownerInternal, methodName, List.copyOf(args));
+                            boolean isVoid = descriptor != null && descriptor.endsWith(")V");
+                            if (isVoid) {
+                                block.add(new ExprStmt(call));
+                            } else {
+                                stack.push(call);
+                            }
+                        }
+                    }
                     case INVOKESTATIC -> {
                         String descriptor = resolveMethodDescriptor(cpi.cpIndex());
                         String methodName = resolveMethodName(cpi.cpIndex());
@@ -344,6 +486,29 @@ public final class ExpressionBuilder {
 
                         Expr lhs = new FieldAccessExpr(obj, fieldName);
                         block.add(new AssignStmt(lhs, value));
+                    }
+                    case NEW -> {
+                        // NEW #idx -> CONSTANT_Class
+                        CpInfo e = cp.entry(cpi.cpIndex());
+                        if (e instanceof CpClass cls) {
+                            String ownerInternal = cp.getClassName(cpi.cpIndex());
+                            // Кладем маркер "неинициализированный объект"
+                            stack.push(new UninitializedNewExpr(ownerInternal));
+                        }
+                    }
+                    case CHECKCAST -> {
+                        // CHECKCAST <cp_index:u2> (CONSTANT_Class)
+                        String internalName = cp.getClassName(cpi.cpIndex());
+                        String typeName = internalName.replace('/', '.');
+                        Expr value = stack.pop();
+                        stack.push(new CastExpr(typeName, value));
+                    }
+                    case INSTANCEOF -> {
+                        // INSTANCEOF <cp_index:u2> (CONSTANT_Class)
+                        String internalName = cp.getClassName(cpi.cpIndex());
+                        String typeName = internalName.replace('/', '.');
+                        Expr value = stack.pop();
+                        stack.push(new InstanceOfExpr(value, typeName));
                     }
                     default -> {
                         // остальные инструкции с cp пока игнорируем

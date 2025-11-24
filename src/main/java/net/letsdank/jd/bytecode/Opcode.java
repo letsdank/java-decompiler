@@ -12,6 +12,25 @@ public enum Opcode {
     ILOAD_2(0x1C, "iload_2"),
     ILOAD_3(0x1D, "iload_3"),
 
+    LLOAD(0x16, "iload", OperandType.LOCAL_INDEX_U1),
+    FLOAD(0x17, "fload", OperandType.LOCAL_INDEX_U1),
+    DLOAD(0x18, "dload", OperandType.LOCAL_INDEX_U1),
+
+    LLOAD_0(0x1E, "lload_0"),
+    LLOAD_1(0x1F, "lload_1"),
+    LLOAD_2(0x20, "lload_2"),
+    LLOAD_3(0x21, "lload_3"),
+
+    FLOAD_0(0x22, "fload_0"),
+    FLOAD_1(0x23, "fload_1"),
+    FLOAD_2(0x24, "fload_2"),
+    FLOAD_3(0x25, "fload_3"),
+
+    DLOAD_0(0x26, "dload_0"),
+    DLOAD_1(0x27, "dload_1"),
+    DLOAD_2(0x28, "dload_2"),
+    DLOAD_3(0x29, "dload_3"),
+
     ALOAD(0x19, "aload", OperandType.LOCAL_INDEX_U1),
     ALOAD_0(0x2A, "aload_0"),
     ALOAD_1(0x2B, "aload_1"),
@@ -23,6 +42,25 @@ public enum Opcode {
     ISTORE_1(0x3C, "istore_1"),
     ISTORE_2(0x3D, "istore_2"),
     ISTORE_3(0x3E, "istore_3"),
+
+    LSTORE(0x37, "lstore", OperandType.LOCAL_INDEX_U1),
+    FSTORE(0x38, "fstore", OperandType.LOCAL_INDEX_U1),
+    DSTORE(0x39, "dstore", OperandType.LOCAL_INDEX_U1),
+
+    LSTORE_0(0x3F, "lstore_0"),
+    LSTORE_1(0x40, "lstore_1"),
+    LSTORE_2(0x41, "lstore_2"),
+    LSTORE_3(0x42, "lstore_3"),
+
+    FSTORE_0(0x43, "fstore_0"),
+    FSTORE_1(0x44, "fstore_1"),
+    FSTORE_2(0x45, "fstore_2"),
+    FSTORE_3(0x46, "fstore_3"),
+
+    DSTORE_0(0x47, "dstore_0"),
+    DSTORE_1(0x48, "dstore_1"),
+    DSTORE_2(0x49, "dstore_2"),
+    DSTORE_3(0x4A, "dstore_3"),
 
     ICONST_M1(0x02, "iconst_m1"),
     ICONST_0(0x03, "iconst_0"),
@@ -79,8 +117,11 @@ public enum Opcode {
     GOTO(0xA7, "goto", OperandType.BRANCH_S2),
 
     // --- возвраты ---
-    ARETURN(0xB0, "areturn"),
     IRETURN(0xAC, "ireturn"),
+    LRETURN(0xAD, "lreturn"),
+    FRETURN(0xAE, "freturn"),
+    DRETURN(0xAF, "dreturn"),
+    ARETURN(0xB0, "areturn"),
     RETURN(0xB1, "return"),
 
     // --- поля/методы (cp_index u2) ---,
@@ -99,6 +140,9 @@ public enum Opcode {
     // --- создание объектов ---
     NEW(0xBB, "new", OperandType.CONSTPOOL_U2),
 
+    // --- проверки типов ---
+    CHECKCAST(0xC0, "checkcast", OperandType.CONSTPOOL_U2),
+    INSTANCEOF(0xC1, "instanceof", OperandType.CONSTPOOL_U2),
     ;
 
     private final int code;
