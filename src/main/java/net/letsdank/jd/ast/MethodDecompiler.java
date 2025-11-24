@@ -76,9 +76,9 @@ public final class MethodDecompiler {
 
         // Найдем BootstrapMethods на уровне класса (если есть)
         BootstrapMethodsAttribute bootstrap = null;
-        for(AttributeInfo attr:cf.attributes()) {
-            if(attr instanceof BootstrapMethodsAttribute bmAttr){
-                bootstrap=bmAttr;
+        for (AttributeInfo attr : cf.attributes()) {
+            if (attr instanceof BootstrapMethodsAttribute bmAttr) {
+                bootstrap = bmAttr;
                 break;
             }
         }

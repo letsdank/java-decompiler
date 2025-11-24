@@ -304,7 +304,7 @@ public final class ExpressionBuilder {
                         Expr size = stack.pop();
                         int typeCode = io.operand();
                         String elemType = mapNewArrayType(typeCode);
-                        stack.push(new NewArrayExpr(elemType,size));
+                        stack.push(new NewArrayExpr(elemType, size));
                     }
                     default -> {
                         // другие инструкции с immediate пока игнорируем
@@ -546,8 +546,8 @@ public final class ExpressionBuilder {
                         // stack: ..., size
                         Expr size = stack.pop();
                         String internalName = cp.getClassName(cpi.cpIndex());
-                        String typeName = internalName.replace('/','.');
-                        stack.push(new NewArrayExpr(typeName,size));
+                        String typeName = internalName.replace('/', '.');
+                        stack.push(new NewArrayExpr(typeName, size));
                     }
                     default -> {
                         // остальные инструкции с cp пока игнорируем

@@ -6,6 +6,11 @@ public record CastExpr(String typeName, Expr value) implements Expr {
     @NotNull
     @Override
     public String toString() {
-        return "(" + typeName + ") " + value;
+        String tn = typeName;
+        if (tn.startsWith("java.lang.")) {
+            tn = tn.substring("java.lang.".length());
+        }
+
+        return "(" + tn + ") " + value;
     }
 }
