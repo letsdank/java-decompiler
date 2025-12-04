@@ -1,9 +1,6 @@
 package net.letsdank.jd.ast;
 
-import net.letsdank.jd.ast.expr.BinaryExpr;
-import net.letsdank.jd.ast.expr.Expr;
-import net.letsdank.jd.ast.expr.IntConstExpr;
-import net.letsdank.jd.ast.expr.VarExpr;
+import net.letsdank.jd.ast.expr.*;
 import net.letsdank.jd.ast.stmt.*;
 import net.letsdank.jd.bytecode.BytecodeDecoder;
 import net.letsdank.jd.bytecode.Opcode;
@@ -295,9 +292,88 @@ public final class MethodDecompiler {
         if (insns.isEmpty()) return false;
         Insn last = insns.getLast();
         if (last instanceof SimpleInsn s) {
-            return s.opcode() == Opcode.IRETURN || s.opcode() == Opcode.RETURN;
+            return switch (s.opcode()) {
+                case IRETURN, LRETURN, FRETURN, DRETURN, ARETURN, RETURN -> true;
+                default -> false;
+            };
         }
         return false;
+    }
+
+    private Stmt tryCombineIfReturnAndNextReturn(IfStmt ifs, Stmt next) {
+        // интересует только if без else
+        BlockStmt elseBlock = ifs.elseBlock();
+        if (elseBlock != null && !elseBlock.statements().isEmpty()) {
+            return null;
+        }
+
+        List<Stmt> thenStmts = ifs.thenBlock().statements();
+        if (thenStmts.size() != 1) return null;
+        if (!(thenStmts.getFirst() instanceof ReturnStmt thenRet)) return null;
+        if (!(next instanceof ReturnStmt elseRet)) return null;
+
+        Expr thenValue = thenRet.value();
+        Expr elseValue = elseRet.value();
+
+        Expr ternary = new TernaryExpr(ifs.condition(), thenValue, elseValue);
+        return new ReturnStmt(ternary);
+    }
+
+    private Stmt trySimplifyBooleanIfReturn(IfStmt ifs) {
+        BlockStmt thenBlock = ifs.thenBlock();
+        BlockStmt elseBlock = ifs.elseBlock();
+        if (elseBlock == null) return null;
+
+        List<Stmt> thenStmts = thenBlock.statements();
+        List<Stmt> elseStmts = elseBlock.statements();
+        if (thenStmts.size() != 1 || elseStmts.size() != 1) return null;
+
+        if (!(thenStmts.getFirst() instanceof ReturnStmt thenRet)) return null;
+        if (!(elseStmts.getFirst() instanceof ReturnStmt elseRet)) return null;
+
+        if (!(thenRet.value() instanceof IntConstExpr tval)) return null;
+        if (!(elseRet.value() instanceof IntConstExpr eval)) return null;
+
+        int tv = tval.value();
+        int ev = eval.value();
+
+        if (tv == 1 && ev == 0) {
+            // if (cond) return 1; else return 0;  -> return cond;
+            return new ReturnStmt(ifs.condition());
+        } else if (tv == 0 && ev == 1) {
+            // if (cond) return 0; else return 1;  -> return !cond;
+            return new ReturnStmt(new UnaryExpr("!", ifs.condition()));
+        }
+
+        return null;
+    }
+
+    private Stmt trySimplifyIfAssign(IfStmt ifs) {
+        BlockStmt thenBlock = ifs.thenBlock();
+        BlockStmt elseBlock = ifs.elseBlock();
+        if (elseBlock == null) return null;
+
+        List<Stmt> thenStmts = thenBlock.statements();
+        List<Stmt> elseStmts = elseBlock.statements();
+        if (thenStmts.size() != 1 && elseStmts.size() != 1) return null;
+
+        if (!(thenStmts.getFirst() instanceof AssignStmt thenAs)) return null;
+        if (!(elseStmts.getFirst() instanceof AssignStmt elseAs)) return null;
+
+        Expr tTarget = thenAs.target();
+        Expr eTarget = elseAs.target();
+
+        // требования: присваиваем в одну и ту же "локацию" (переменную, поле и т.п.)
+        if (!tTarget.equals(eTarget)) {
+            return null;
+        }
+
+        Expr cond = ifs.condition();
+        Expr thenVal = thenAs.value();
+        Expr elseVal = elseAs.value();
+
+        Expr ternary = new TernaryExpr(cond, thenVal, elseVal);
+        return new AssignStmt(tTarget, ternary);
     }
 
     private Expr buildIfConditionForFallthrough(JumpInsn j, Deque<Expr> stackBefore) {
@@ -399,23 +475,58 @@ public final class MethodDecompiler {
 
     private MethodAst postProcessLoops(MethodAst ast) {
         BlockStmt body = ast.body();
-        BlockStmt transformed = transformBlock(body);
+        boolean returnsBoolean = ast.descriptor() != null && ast.descriptor().endsWith(")Z");
+        BlockStmt transformed = transformBlock(body, returnsBoolean);
         if (transformed == body) return ast;
         return new MethodAst(ast.name(), ast.descriptor(), transformed);
     }
 
-    private BlockStmt transformBlock(BlockStmt block) {
+    private BlockStmt transformBlock(BlockStmt block, boolean returnsBoolean) {
         var src = block.statements();
         List<Stmt> result = new ArrayList<>(src.size());
 
-        for (Stmt s : src) {
+        for (int i = 0; i < src.size(); i++) {
+            Stmt s = src.get(i);
+
             if (s instanceof LoopStmt loop) {
-                result.add(transformLoop(loop));
+                result.add(transformLoop(loop, returnsBoolean));
             } else if (s instanceof IfStmt ifs) {
-                // рекурсивно обрабатываем then/else
-                BlockStmt thenT = transformBlock(ifs.thenBlock());
-                BlockStmt elseT = ifs.elseBlock() != null ? transformBlock(ifs.elseBlock()) : null;
-                result.add(new IfStmt(ifs.condition(), thenT, elseT));
+                // сначала рекурсивно обрабатываем then/else
+                BlockStmt thenT = transformBlock(ifs.thenBlock(), returnsBoolean);
+                BlockStmt elseT = ifs.elseBlock() != null
+                        ? transformBlock(ifs.elseBlock(), returnsBoolean)
+                        : null;
+
+                IfStmt normalized = new IfStmt(ifs.condition(), thenT, elseT);
+
+                // 1. if (...) return ...; else return ...; -> return cond ? ... : ...;
+                if (i + 1 < src.size()) {
+                    Stmt next = src.get(i + 1);
+                    Stmt combined = tryCombineIfReturnAndNextReturn(normalized, next);
+                    if (combined != null) {
+                        result.add(combined);
+                        i++; // съедаем следующий stmt
+                        continue;
+                    }
+                }
+
+                // 2. boolean-паттерны: if (cond) return 1; else return 0/1;
+                if (returnsBoolean) {
+                    Stmt boolSimplified = trySimplifyBooleanIfReturn(normalized);
+                    if (boolSimplified != null) {
+                        result.add(boolSimplified);
+                        continue;
+                    }
+                }
+
+                // 3. if (cond) x = 1; else x = b; -> x = cond ? a : b;
+                Stmt assignSimplified = trySimplifyIfAssign(normalized);
+                if (assignSimplified != null) {
+                    result.add(assignSimplified);
+                    continue;
+                }
+
+                result.add(normalized);
             } else {
                 result.add(s);
             }
@@ -424,18 +535,32 @@ public final class MethodDecompiler {
         return new BlockStmt(result);
     }
 
-    // Временно не распознаем for-циклы автоматически.
-    // Мы только рекурсивно нормализуем тело (if/loops внутри),
-    // но сам цикл остается while.
-    private Stmt transformLoop(LoopStmt loop) {
-        BlockStmt body = loop.body();
-        BlockStmt transformedBody = transformBlock(body);
+    private Stmt transformLoop(LoopStmt loop, boolean returnsBoolean) {
+        // Сначала прогоняем тело цикла через transformBlock рекурсивно,
+        // чтобы нормализовать вложенные if/loops.
+        BlockStmt originalBody = loop.body();
+        BlockStmt normalizedBody = transformBlock(originalBody, returnsBoolean);
 
-        // Если тело не изменилось, просто возвращаем исходный цикл
-        if (transformedBody.equals(body)) return loop;
+        var stmts = normalizedBody.statements();
+        if (!stmts.isEmpty()) {
+            Stmt last = stmts.getLast();
+            AssignStmt update = extractSimpleUpdate(last);
+            if (update != null) {
+                // Нашли паттерн "i = i + N" в конце тела цикла -> можно собрать for
+                var bodyWithoutUpdate = new ArrayList<Stmt>(stmts.size() - 1);
+                bodyWithoutUpdate.addAll(stmts.subList(0, stmts.size() - 1));
+                BlockStmt forBody = new BlockStmt(bodyWithoutUpdate);
 
-        // Иначе создаем новый LoopStmt с тем же условием, но нормализованным телом
-        return new LoopStmt(loop.condition(), transformedBody);
+                // Пока init не выделяем, используем только condition и update.
+                return new ForStmt(null, loop.condition(), update, forBody);
+            }
+        }
+
+        // Если тело не изменилось и паттерн for не нашли, просто возвращаем исходный цикл
+        if (normalizedBody.equals(originalBody)) return loop;
+
+        // Иначе хотя бы обновим тело while на нормализованную версию
+        return new LoopStmt(loop.condition(), normalizedBody);
     }
 
     // Проверка, что последнее выражение - простой инкремент i = 1 + 1

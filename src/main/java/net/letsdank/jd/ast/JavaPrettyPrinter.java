@@ -184,7 +184,7 @@ public final class JavaPrettyPrinter {
 
     private void printReturn(ReturnStmt rs) {
         if (rs.value() == null) appendLine("return;");
-        else appendLine("return " + rs.value().toString() + ";");
+        else appendLine("return " + rs.value() + ";");
     }
 
     private void printExprStmt(ExprStmt es) {

@@ -231,7 +231,7 @@ public final class DecompilerFrame extends JFrame {
 
     private void openJarFile(File jarFile) {
         try (JarFile jar = new JarFile(jarFile)) {
-            ClassFileReader reander = new ClassFileReader();
+            ClassFileReader reader = new ClassFileReader();
 
             DefaultMutableTreeNode root = new DefaultMutableTreeNode(jarFile.getName());
             Map<String, DefaultMutableTreeNode> packageNodes = new HashMap<>();
@@ -246,7 +246,7 @@ public final class DecompilerFrame extends JFrame {
                 if (!name.endsWith(".class")) continue;
 
                 try (InputStream in = jar.getInputStream(entry)) {
-                    ClassFile cf = reander.read(in);
+                    ClassFile cf = reader.read(in);
                     if (!backendInitialized) {
                         currentBackend = LanguageBackends.autoDetect(cf);
                         backendInitialized = true;

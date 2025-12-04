@@ -286,24 +286,24 @@ public final class KotlinPrettyPrinter {
     }
 
     private String printSimpleExpr(Expr expr) {
-        if(expr instanceof CastExpr c) {
+        if (expr instanceof CastExpr c) {
             // Kotlin cast: expr as Type
             return printExpr(c.value()) + " as " + c.typeName();
         }
-        if (expr instanceof InstanceOfExpr io){
+        if (expr instanceof InstanceOfExpr io) {
             // Kotlin instanceof: expr is Type
             return printExpr(io.value()) + " is " + io.typeName();
         }
-        if(expr instanceof NewArrayExpr na) {
+        if (expr instanceof NewArrayExpr na) {
             // Базовый вариант: new T[n] -> Array<T>(n) можно улучшать позже
             // Пока оставим Java-стиль, чтобы не поломать ничего:
             return na.toString();
         }
-        if(expr instanceof ArrayAccessExpr aa) {
+        if (expr instanceof ArrayAccessExpr aa) {
             // У Kotlin доступ к массиву такой же, как в Java
             return printExpr(aa.array()) + "[" + printExpr(aa.index()) + "]";
         }
-        if(expr instanceof ArrayLengthExpr al) {
+        if (expr instanceof ArrayLengthExpr al) {
             // В Kotlin длина массива: arr.size, но arr.length тоже допустимо в байткодных паттернах.
             // Для красоты можно сделать size:
             return printExpr(al.array()) + ".size";
@@ -350,6 +350,38 @@ public final class KotlinPrettyPrinter {
         // Экранируем $ внутри литерала, чтобы он не стал началом шаблона
         escaped = escaped.replace("$", "\\$");
         return escaped;
+    }
+
+    private String kotlinTypeFromFqn(String fqn) {
+        if (fqn == null || fqn.isEmpty()) return "Any";
+
+        String t = fqn.replace('/', '.');
+
+        // java.lang.* -> короткое имя
+        if (t.startsWith("java.lang.")) {
+            t = t.substring("java.lang.".length());
+        }
+
+        // Простейшее сопоставление wrapper-классов с Kotlin-типами
+        switch (t) {
+            case "Integer" -> t = "Int";
+            case "Long" -> t = "Long";
+            case "Short" -> t = "Short";
+            case "Byte" -> t = "Byte";
+            case "Float" -> t = "Float";
+            case "Double" -> t = "Double";
+            case "Character" -> t = "Char";
+            case "Boolean" -> t = "Boolean";
+            default -> {
+                // Для остальных - просто короткое имя без пакета
+                int lastDot = t.lastIndexOf('.');
+                if (lastDot >= 0 && lastDot + 1 < t.length()) {
+                    t = t.substring(lastDot + 1);
+                }
+            }
+        }
+
+        return t;
     }
 
     private boolean isSimpleIdentifier(String name) {
