@@ -18,10 +18,7 @@ import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
 import net.letsdank.jd.utils.JDUtils;
 
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.List;
+import java.util.*;
 
 public final class MethodDecompiler {
     private final CfgBuilder cfgBuilder = new CfgBuilder();
@@ -250,9 +247,10 @@ public final class MethodDecompiler {
 
     private LoopStmt tryBuildWhileLoop(ControlFlowGraph cfg, LocalNameProvider localNames, ConstantPool cp) {
         // Очень ограниченный шаблон:
-        // condBlock: ... if_<cmp> targetExit
-        // bodyBlock: ... goto condBlock
-        // exitBlock: ... (например, return)
+        // condBlock: ... if_<cmp> targetExit/body
+        // body: одна или несколько линейно связанных вершин, последняя из которых
+        //       делает goto condBlock
+        // exitBlock: блок выхода (например, return)
         for (BasicBlock condBlock : cfg.blocks()) {
             var insns = condBlock.instructions();
             if (insns.isEmpty()) continue;
@@ -269,17 +267,39 @@ public final class MethodDecompiler {
             BasicBlock s0 = condBlock.successors().get(0);
             BasicBlock s1 = condBlock.successors().get(1);
 
-            // определяем body/exit по наличию goto-назад
-            BasicBlock bodyBlock = null;
+            // Пытаемся определить, какая из веток - вход в тело цикла.
+            // Для этого просим collectLinearLoopBody собрать цепочку и проверить,
+            // что она замыкается обратно на condBlock.
+            List<BasicBlock> bodyBlocks = null;
+            BasicBlock bodyEntry = null;
             BasicBlock exitBlock = null;
 
-            if (endsWithGotoTo(s0, condBlock.startOffset())) {
-                bodyBlock = s0;
+            // Кандидат 1: s0 как начало тела
+            List<BasicBlock> candidate0 = collectLinearLoopBody(condBlock, s0);
+            if (candidate0 != null) {
+                bodyBlocks = candidate0;
+                bodyEntry = s0;
                 exitBlock = s1;
-            } else if (endsWithGotoTo(s1, condBlock.startOffset())) {
-                bodyBlock = s1;
-                exitBlock = s0;
-            } else {
+            }
+
+            // Кандидат 2: s1 как начало тела
+            List<BasicBlock> candidate1 = collectLinearLoopBody(condBlock, s1);
+            if (candidate1 != null) {
+                // Если уже нашли тело через s0, и через s1 тоже нашли -
+                // это уже странный граф, пока не поддерживаем
+                if (bodyBlocks != null) {
+                    bodyBlocks = null;
+                    bodyEntry = null;
+                    exitBlock = null;
+                } else {
+                    bodyBlocks = candidate1;
+                    bodyEntry = s1;
+                    exitBlock = s0;
+                }
+            }
+
+            if (bodyBlocks == null || bodyEntry == null) {
+                // не нашли линейное тело цикла
                 continue;
             }
 
@@ -287,22 +307,36 @@ public final class MethodDecompiler {
             ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options);
             var stackBefore = exprBuilder.simulateStackBeforeBranch(insns);
 
-            Expr condition = buildLoopConditionExpr(j, stackBefore, bodyBlock.startOffset() == j.targetOffset());
+            boolean bodyIsTarget = (j.targetOffset() == bodyEntry.startOffset());
+            Expr condition = buildLoopConditionExpr(j, stackBefore, bodyIsTarget);
             if (condition == null) {
                 continue;
             }
 
-            // тело цикла - инструкции bodyBlock без финального goto
-            var bodyInsns = bodyBlock.instructions();
-            if (bodyInsns.isEmpty()) continue;
+            // Собираем инструкции всех блоков тела, но выкидываем финальный goto обратно к condBlock
+            List<Insn> bodyInsns = new ArrayList<>();
+            for (int bi = 0; bi < bodyBlocks.size(); bi++) {
+                BasicBlock bb = bodyBlocks.get(bi);
+                var bbInsns = bb.instructions();
+                if (bbInsns.isEmpty()) continue;
 
-            List<Insn> bodyCore = bodyInsns;
-            Insn bodyLast = bodyInsns.getLast();
-            if (bodyLast instanceof JumpInsn bj && bj.opcode() == Opcode.GOTO) {
-                bodyCore = bodyInsns.subList(0, bodyInsns.size() - 1);
+                if (bi == bodyBlocks.size() - 1) {
+                    // Последний блок тела: отбрасываем финальный goto
+                    int size = bbInsns.size();
+                    if (size > 1) {
+                        bodyInsns.addAll(bbInsns.subList(0, size - 1));
+                    }
+                } else {
+                    bodyInsns.addAll(bbInsns);
+                }
             }
 
-            BlockStmt bodyAst = exprBuilder.buildBlock(bodyCore);
+            if (bodyInsns.isEmpty()) {
+                // тело пустое - странно, пропускаем
+                continue;
+            }
+
+            BlockStmt bodyAst = exprBuilder.buildBlock(bodyInsns);
             return new LoopStmt(condition, bodyAst);
         }
 
@@ -974,5 +1008,66 @@ public final class MethodDecompiler {
         if (stmts.isEmpty()) return null;
         if (stmts.getLast() instanceof ReturnStmt rs) return rs;
         return null;
+    }
+
+    /*
+        Пытаемся собрать линейное тело цикла, начиная с bodyEntry:
+        bodyEntry -> ... -> ... -> lastBodyBlock -> condBlock
+
+        Требования:
+        - в теле нет ветвлений (каждый блок имеет ровно одного successor'а);
+        - последний блок в цепочке ведет обратно в condBlock;
+        - нет циклов внутри тела (кроме обратного ребра на condBlock).
+
+        Если паттерн не совпал - возвращаем null.
+     */
+    private List<BasicBlock> collectLinearLoopBody(BasicBlock condBlock, BasicBlock bodyEntry) {
+        List<BasicBlock> body = new ArrayList<>();
+        BasicBlock current = bodyEntry;
+
+        // Защита от зацикливания
+        var visited = new HashSet<>();
+
+        while (true) {
+            if (!visited.add(current)) {
+                // цикл внутри тела (не через condBlock) - не наш кейс
+                return null;
+            }
+
+            body.add(current);
+
+            var succs = current.successors();
+            if (succs.isEmpty()) {
+                // тупик, так и не дошли до condBlock
+                return null;
+            }
+            if (succs.size() > 1) {
+                // ветвление внутри тела - пока не поддерживаем
+                return null;
+            }
+
+            BasicBlock next = succs.getFirst();
+            if (next == condBlock) {
+                // нашли back-edge: current -> condBlock
+                break;
+            }
+
+            current = next;
+        }
+
+        // Доп. проверка: последний блок действительно заканчивается
+        // goto condBlock, а не чем-то странным.
+        BasicBlock lastBody = body.getLast();
+        var insns = lastBody.instructions();
+        if (insns.isEmpty()) {
+            return null;
+        }
+        Insn last = insns.getLast();
+        if (!(last instanceof JumpInsn j) || j.opcode() != Opcode.GOTO ||
+                j.targetOffset() != condBlock.startOffset()) {
+            return null;
+        }
+
+        return body;
     }
 }
