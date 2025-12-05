@@ -94,10 +94,16 @@ public final class MethodDecompiler {
             return postProcessLoops(new MethodAst(name, desc, linearBody));
         }
 
+        // Пытаемся распознать guard-return по CFG
+        MethodAst guardAst = tryBuildGuardReturnAtEntry(cfg, localNames, cp, options, bootstrap, name, desc);
+        if (guardAst != null) {
+            return postProcessLoops(guardAst);
+        }
+
         // ИНАЧЕ: сложный control flow - пока не пытаемся притворяться умными.
         BlockStmt placeholder = new BlockStmt();
         placeholder.add(new ExprStmt(
-                new StringLiteralExpr("/* TODO: complex control flow (experimental decompiler skipped) */")
+                new VarExpr("// TODO: complex control flow (experimental decompiler skipped)")
         ));
         return new MethodAst(name, desc, placeholder);
     }
@@ -286,6 +292,115 @@ public final class MethodDecompiler {
         return null;
     }
 
+    private MethodAst tryBuildGuardReturnAtEntry(ControlFlowGraph cfg, LocalNameProvider localNames,
+                                                 ConstantPool cp, DecompilerOptions options,
+                                                 BootstrapMethodsAttribute bootstrap, String name, String desc) {
+        BasicBlock entry = cfg.entryBlock();
+        if (entry == null) return null;
+
+        var entryInsns = entry.instructions();
+        if (entryInsns.isEmpty()) return null;
+
+        Insn last = entryInsns.getLast();
+        if (!(last instanceof JumpInsn j) || !JDUtils.isConditional(j.opcode())) {
+            return null;
+        }
+
+        if (entry.successors().size() != 2) {
+            return null;
+        }
+
+        BasicBlock s0 = entry.successors().get(0);
+        BasicBlock s1 = entry.successors().get(1);
+
+        // Определяем, какой successor - прыжок, а какой - fallthrough
+        BasicBlock jumpSucc;
+        BasicBlock fallthrough;
+        if (s0.startOffset() == j.targetOffset()) {
+            jumpSucc = s0;
+            fallthrough = s1;
+        } else if (s1.startOffset() == j.targetOffset()) {
+            jumpSucc = s1;
+            fallthrough = s0;
+        } else {
+            // странный CFG, не наш случай
+            return null;
+        }
+
+        // Блок-guard: тот, который заканчивается return
+        BasicBlock guardBlock;
+        BasicBlock contBlock;
+
+        if (endsWithReturn(jumpSucc)) {
+            guardBlock = jumpSucc;
+            contBlock = fallthrough;
+        } else if (endsWithReturn(fallthrough)) {
+            guardBlock = fallthrough;
+            contBlock = jumpSucc;
+        } else {
+            return null;
+        }
+
+        // Ограничим сложность: пока поддерживаем случаи, когда после guard-блока
+        // основной код в одном линейном блоке без своих прыжков.
+        if (containsJump(contBlock)) {
+            return null;
+        }
+
+        // Также не лезем, если CFG содержит еще какие-то блоки помимо entry/guard/cont.
+        var blocks = cfg.blocks();
+        if (blocks.size() > 3) {
+            return null;
+        }
+
+        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options, bootstrap);
+        BlockStmt body = new BlockStmt();
+
+        // 1. Префикс entry-блока: все инструкции до JumpInsn - это просто линейный код
+        if (entryInsns.size() > 1) {
+            List<Insn> prefixInsns = entryInsns.subList(0, entryInsns.size() - 1);
+            if (!prefixInsns.isEmpty()) {
+                BlockStmt prefixAst = exprBuilder.buildBlock(prefixInsns);
+                prefixAst.statements().forEach(body::add);
+            }
+        }
+
+        // 2. Условие: нужно получить его так, чтобы оно соответствовало ветке,
+        //    которая ведет в guardBlock.
+        var stackBefore = exprBuilder.simulateStackBeforeBranch(entryInsns);
+
+        Expr condExpr;
+        if (guardBlock == jumpSucc) {
+            // условие для прыжка == guard
+            condExpr = buildConditionExpr(j, stackBefore);
+        } else {
+            // guard = fallthrough-ветка
+            condExpr = buildIfConditionForFallthrough(j, stackBefore);
+        }
+        if (condExpr == null) {
+            return null;
+        }
+
+        // 3. AST guard-блока: собираем его как обычный block и забираем ReturnStmt
+        BlockStmt guardAst = exprBuilder.buildBlock(guardBlock.instructions());
+        ReturnStmt guardReturn = extractLastReturn(guardAst);
+        if (guardReturn == null) {
+            return null;
+        }
+
+        BlockStmt guardThen = new BlockStmt();
+        guardThen.add(guardReturn);
+
+        IfStmt guardIf = new IfStmt(condExpr, guardThen, null);
+        body.add(guardIf);
+
+        // 4. Основной код: просто линейно расписываем contBlock
+        BlockStmt contAst = exprBuilder.buildBlock(contBlock.instructions());
+        contAst.statements().forEach(body::add);
+
+        return new MethodAst(name, desc, body);
+    }
+
     private boolean endsWithGotoTo(BasicBlock bb, int targetOffset) {
         var insns = bb.instructions();
         if (insns.isEmpty()) return false;
@@ -364,7 +479,7 @@ public final class MethodDecompiler {
 
         List<Stmt> thenStmts = thenBlock.statements();
         List<Stmt> elseStmts = elseBlock.statements();
-        if (thenStmts.size() != 1 && elseStmts.size() != 1) return null;
+        if (thenStmts.size() != 1 || elseStmts.size() != 1) return null;
 
         if (!(thenStmts.getFirst() instanceof AssignStmt thenAs)) return null;
         if (!(elseStmts.getFirst() instanceof AssignStmt elseAs)) return null;
@@ -594,5 +709,21 @@ public final class MethodDecompiler {
             // сюда же можно будет добавить TABLESWITCH/LOOKUPSWITCH, если они не как JumpInsn
         }
         return false;
+    }
+
+    // Проверка, есть ли Jump в блоке
+    private boolean containsJump(BasicBlock bb) {
+        var insns = bb.instructions();
+        if (insns.isEmpty()) return false;
+        Insn last = insns.getLast();
+        return last instanceof JumpInsn;
+    }
+
+    // Достаем последний ReturnStmt из блока
+    private ReturnStmt extractLastReturn(BlockStmt block) {
+        var stmts = block.statements();
+        if (stmts.isEmpty()) return null;
+        if (stmts.getLast() instanceof ReturnStmt rs) return rs;
+        return null;
     }
 }
