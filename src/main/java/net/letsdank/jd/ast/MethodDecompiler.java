@@ -86,11 +86,20 @@ public final class MethodDecompiler {
             }
         }
 
-        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options, bootstrap);
-        BlockStmt linearBody = exprBuilder.buildBlock(insns);
+        // Если в методе вообще нет условные/безусловных переходов -
+        // его можно честно разобрать линейным стековым интерпретатором.
+        if (!hasControlFlow(insns)) {
+            ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options, bootstrap);
+            BlockStmt linearBody = exprBuilder.buildBlock(insns);
+            return postProcessLoops(new MethodAst(name, desc, linearBody));
+        }
 
-        // Fallback: просто линейный AST
-        return postProcessLoops(new MethodAst(name, desc, linearBody));
+        // ИНАЧЕ: сложный control flow - пока не пытаемся притворяться умными.
+        BlockStmt placeholder = new BlockStmt();
+        placeholder.add(new ExprStmt(
+                new StringLiteralExpr("/* TODO: complex control flow (experimental decompiler skipped) */")
+        ));
+        return new MethodAst(name, desc, placeholder);
     }
 
     /**
@@ -577,5 +586,13 @@ public final class MethodDecompiler {
 
         // i = i + 1 / i = i + N (N >= 1)
         return as;
+    }
+
+    private boolean hasControlFlow(List<Insn> insns) {
+        for (Insn i : insns) {
+            if (i instanceof JumpInsn) return true;
+            // сюда же можно будет добавить TABLESWITCH/LOOKUPSWITCH, если они не как JumpInsn
+        }
+        return false;
     }
 }
