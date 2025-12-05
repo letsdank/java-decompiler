@@ -49,10 +49,28 @@ public final class MethodDecompiler {
             localNames = new LocalVariableNameProvider(baseNames, codeAttr.localVariableAttribute(), cp);
         }
 
+        // Найдем BootstrapMethods на уровне класса (если есть)
+        BootstrapMethodsAttribute bootstrap = null;
+        for (AttributeInfo attr : cf.attributes()) {
+            if (attr instanceof BootstrapMethodsAttribute bmAttr) {
+                bootstrap = bmAttr;
+                break;
+            }
+        }
+
         byte[] code = codeAttr.code();
 
-        // 1. Строим CFG и пытаемся найти условный переход + условие
+        // 1. Строим CFG
         ControlFlowGraph cfg = cfgBuilder.build(code);
+
+        // 1.1. Попытка рекурсивной структуризации для ацикличных графов:
+        //      if/if-else/последовательности без циклов.
+        if (!hasBackEdge(cfg)) {
+            MethodAst structured = tryStructurizeAcyclicCfg(cfg, localNames, cp, options, bootstrap, name, desc);
+            if (structured != null) {
+                return postProcessLoops(structured);
+            }
+        }
 
         // 2. Попытка распознать простой while
         LoopStmt loop = tryBuildWhileLoop(cfg, localNames, cp);
@@ -73,15 +91,6 @@ public final class MethodDecompiler {
         // 3. Строим линейный AST по всему байткоду
         BytecodeDecoder decoder = new BytecodeDecoder();
         List<Insn> insns = decoder.decode(code);
-
-        // Найдем BootstrapMethods на уровне класса (если есть)
-        BootstrapMethodsAttribute bootstrap = null;
-        for (AttributeInfo attr : cf.attributes()) {
-            if (attr instanceof BootstrapMethodsAttribute bmAttr) {
-                bootstrap = bmAttr;
-                break;
-            }
-        }
 
         // Если в методе вообще нет условные/безусловных переходов -
         // его можно честно разобрать линейным стековым интерпретатором.
@@ -290,7 +299,7 @@ public final class MethodDecompiler {
             BasicBlock exitBlock = null;
 
             // Кандидат 1: s0 как начало тела
-            List<BasicBlock> candidate0 = collectLinearLoopBody(condBlock, s0);
+            List<BasicBlock> candidate0 = collectLoopBody(condBlock, s0, s1);
             if (candidate0 != null) {
                 bodyBlocks = candidate0;
                 bodyEntry = s0;
@@ -298,7 +307,7 @@ public final class MethodDecompiler {
             }
 
             // Кандидат 2: s1 как начало тела
-            List<BasicBlock> candidate1 = collectLinearLoopBody(condBlock, s1);
+            List<BasicBlock> candidate1 = collectLoopBody(condBlock, s1, s0);
             if (candidate1 != null) {
                 // Если уже нашли тело через s0, и через s1 тоже нашли -
                 // это уже странный граф, пока не поддерживаем
@@ -313,7 +322,7 @@ public final class MethodDecompiler {
                 }
             }
 
-            if (bodyBlocks == null || bodyEntry == null) {
+            if (bodyBlocks == null || bodyEntry == null || exitBlock == null) {
                 // не нашли линейное тело цикла
                 continue;
             }
@@ -328,30 +337,13 @@ public final class MethodDecompiler {
                 continue;
             }
 
-            // Собираем инструкции всех блоков тела, но выкидываем финальный goto обратно к condBlock
-            List<Insn> bodyInsns = new ArrayList<>();
-            for (int bi = 0; bi < bodyBlocks.size(); bi++) {
-                BasicBlock bb = bodyBlocks.get(bi);
-                var bbInsns = bb.instructions();
-                if (bbInsns.isEmpty()) continue;
-
-                if (bi == bodyBlocks.size() - 1) {
-                    // Последний блок тела: отбрасываем финальный goto
-                    int size = bbInsns.size();
-                    if (size > 1) {
-                        bodyInsns.addAll(bbInsns.subList(0, size - 1));
-                    }
-                } else {
-                    bodyInsns.addAll(bbInsns);
-                }
-            }
-
-            if (bodyInsns.isEmpty()) {
-                // тело пустое - странно, пропускаем
+            // Пытаемся построить структурированное тело цикла
+            BlockStmt bodyAst = buildStructuredLoopBody(bodyBlocks, localNames, cp);
+            if (bodyAst == null) {
+                // тело содержит более сложный control flow, чем мы умеем - не распознаем цикл
                 continue;
             }
 
-            BlockStmt bodyAst = exprBuilder.buildBlock(bodyInsns);
             return new LoopStmt(condition, bodyAst);
         }
 
@@ -687,7 +679,7 @@ public final class MethodDecompiler {
 
         for (int k = joinIndex; k < blocks.size(); k++) {
             BasicBlock bb = blocks.get(k);
-            if (containsJump(joinBlock)) {
+            if (containsJump(bb)) {
                 // как только встретили новый переход - лучше отдать метод в общий fallback
                 return null;
             }
@@ -797,6 +789,214 @@ public final class MethodDecompiler {
         return new AssignStmt(tTarget, ternary);
     }
 
+    /*
+        Рекурсивно структурируем ацикличный CFG:
+        строим последовательности, if, if-else, пока не встретим что-то,
+        чего не умеем. В этом случае возвращаем null и даем шанс
+        другим паттернам / линейному fallback'у.
+     */
+    private MethodAst tryStructurizeAcyclicCfg(ControlFlowGraph cfg,
+                                               LocalNameProvider localNames,
+                                               ConstantPool cp,
+                                               DecompilerOptions options,
+                                               BootstrapMethodsAttribute bootstrap,
+                                               String name, String desc) {
+        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options, bootstrap);
+
+        BasicBlock entry = cfg.entryBlock();
+        if (entry == null) return null;
+
+        Set<BasicBlock> visited = new HashSet<>();
+        BlockStmt body = buildStructuredRegion(entry, visited, Collections.emptySet(), exprBuilder, cfg.blocks());
+
+        if (body == null) {
+            return null;
+        }
+
+        // Проверим, что мы ничего существенного не пропустили:
+        // все достижимые от entry блоки либо посещены, либо
+        // невозможно до них добраться без back-edge'ов (которых нет).
+        // Для простоты пока требуем: посещены все блоки CFG.
+        if (visited.size() != cfg.blocks().size()) {
+            return null;
+        }
+
+        return new MethodAst(name, desc, body);
+    }
+
+    /*
+        Рекурсивно строим BlockStmt, начиная с блока start,
+        пока не дойдем до:
+        - блока из stopSet;
+        - уже посещенного блока;
+        - конца CFG.
+
+        blocks - полный список блоков CFG (нужен для некоторых проверок).
+     */
+    private BlockStmt buildStructuredRegion(BasicBlock start,
+                                            Set<BasicBlock> visited,
+                                            Set<BasicBlock> stopSet,
+                                            ExpressionBuilder exprBuilder,
+                                            List<BasicBlock> blocks) {
+        BlockStmt result = new BlockStmt();
+        BasicBlock cur = start;
+
+        while (cur != null && !stopSet.contains(cur) && !visited.contains(cur)) {
+            visited.add(cur);
+
+            var insns = cur.instructions();
+            if (insns.isEmpty()) {
+                cur = nextLinearSuccessor(cur);
+                continue;
+            }
+
+            Insn last = insns.getLast();
+
+            // --- Условный переход: пытаемся распознать if/if-else ---
+            if (last instanceof JumpInsn j && JDUtils.isConditional(j.opcode())) {
+                // Префикс до условного прыжка - линейный код
+                if (insns.size() > 1) {
+                    List<Insn> prefixInsns = insns.subList(0, insns.size() - 1);
+                    if (!prefixInsns.isEmpty()) {
+                        BlockStmt prefixAst = safeBuildBlock(exprBuilder, prefixInsns);
+                        if (prefixAst == null) return null;
+                        prefixAst.statements().forEach(result::add);
+                    }
+                }
+
+                if (cur.successors().size() != 2) {
+                    // Неподдерживаемая развилка
+                    return null;
+                }
+
+                BasicBlock s0 = cur.successors().get(0);
+                BasicBlock s1 = cur.successors().get(1);
+
+                // Разобрать jumpTarget/fallthrough
+                BasicBlock jumpSucc;
+                BasicBlock fallthrough;
+                if (j.targetOffset() == s0.startOffset()) {
+                    jumpSucc = s0;
+                    fallthrough = s1;
+                } else if (j.targetOffset() == s1.startOffset()) {
+                    jumpSucc = s1;
+                    fallthrough = s0;
+                } else {
+                    return null;
+                }
+
+                // Попробуем сначала if-else с join-блоком
+                BasicBlock join = findJoinForDiamond(fallthrough, jumpSucc, blocks);
+                if (join != null) {
+                    // Условие строим так, чтобы THEN = fallthrough
+                    Deque<Expr> stackBefore = exprBuilder.simulateStackBeforeBranch(insns);
+                    Expr cond = buildIfConditionForFallthrough(j, stackBefore);
+                    if (cond == null) return null;
+
+                    // Рекурсивно структурируем then/else до join
+                    BlockStmt thenAst = buildStructuredRegion(fallthrough, visited, Set.of(join), exprBuilder, blocks);
+                    if (thenAst == null) return null;
+
+                    BlockStmt elseAst = buildStructuredRegion(jumpSucc, visited, Set.of(join), exprBuilder, blocks);
+                    if (elseAst == null) return null;
+
+                    result.add(new IfStmt(cond, thenAst, elseAst));
+
+                    // Продолжаем после join
+                    cur = join;
+                    continue;
+                }
+
+                // Если diamond не нашли - попробуем простой if без else:
+                // jump-ветка - THEN, другая - "продолжение"
+                BasicBlock thenBlock;
+                BasicBlock contBlock;
+                if (j.targetOffset() == s0.startOffset()) {
+                    thenBlock = s0;
+                    contBlock = s1;
+                } else if (j.targetOffset() == s1.startOffset()) {
+                    thenBlock = s1;
+                    contBlock = s0;
+                } else {
+                    return null;
+                }
+
+                // Не лезем в guard-return: if (cond) return...
+                if (endsWithReturn(thenBlock)) {
+                    return null;
+                }
+
+                // Условие для ветки перехода
+                Deque<Expr> stackBefore = exprBuilder.simulateStackBeforeBranch(insns);
+                Expr cond = buildConditionExpr(j, stackBefore);
+                if (cond == null) return null;
+
+                // THEN - рекурсивный регион до contBlock
+                BlockStmt thenAst = buildStructuredRegion(thenBlock, visited, Set.of(contBlock), exprBuilder, blocks);
+                if (thenAst == null) return null;
+
+                result.add(new IfStmt(cond, thenAst, null));
+
+                // Продолжаем со "следующим" блоком за if - contBlock
+                cur = contBlock;
+                continue;
+            }
+
+            // --- Безусловный goto внутри ациклического структуризатора ---
+            if (last instanceof JumpInsn uj && uj.opcode() == Opcode.GOTO) {
+                // Прямо переходим в successor, но только если он единственный
+                if (cur.successors().size() != 1) {
+                    return null;
+                }
+
+                // Весь блок - линейный код, включая goto (ExpressionBuilder его игнорит)
+                BlockStmt blockAst = safeBuildBlock(exprBuilder, insns);
+                if (blockAst == null) return null;
+                blockAst.statements().forEach(result::add);
+
+                cur = cur.successors().getFirst();
+                continue;
+            }
+
+            // --- Возврат ---
+            if (last instanceof SimpleInsn s &&
+                    (s.opcode() == Opcode.RETURN ||
+                            s.opcode() == Opcode.IRETURN ||
+                            s.opcode() == Opcode.LRETURN ||
+                            s.opcode() == Opcode.FRETURN ||
+                            s.opcode() == Opcode.DRETURN ||
+                            s.opcode() == Opcode.ARETURN)) {
+
+                BlockStmt blockAst = safeBuildBlock(exprBuilder, insns);
+                if (blockAst == null) {
+                    // Значит, блок нельзя честно интерпретировать (подвешенный стек и пр.) -
+                    // признаем, что наш структуризатор "не тянет" этот метод.
+                    return null;
+                }
+                blockAst.statements().forEach(result::add);
+                // после return дальше в этом регионе идти некуда
+                break;
+            }
+
+            // --- Обычный линейный блок ---
+            BlockStmt blockAst = safeBuildBlock(exprBuilder, insns);
+            if (blockAst == null) return null;
+            blockAst.statements().forEach(result::add);
+
+            var succs = cur.successors();
+            if (succs.isEmpty()) {
+                cur = null;
+            } else if (succs.size() == 1) {
+                cur = succs.getFirst();
+            } else {
+                // Несколько succ без явного условного Jump в конце - странный случай
+                return null;
+            }
+        }
+
+        return result;
+    }
+
     private Expr buildIfConditionForFallthrough(JumpInsn j, Deque<Expr> stackBefore) {
         Opcode op = j.opcode();
         Deque<Expr> stack = new ArrayDeque<>(stackBefore);
@@ -892,6 +1092,181 @@ public final class MethodDecompiler {
             // Для простоты пока вернем condForJump (то есть, без инверсии)
             return condForJump;
         }
+    }
+
+    /*
+        Пытаемся построить тело цикла как структурированный BlockStmt по под-CFG.
+        Поддерживаем только очень простые случаи:
+            - нет прыжков вообще -> линейный buildBlock;
+            - один if / if-else в начале с join-блоком и линейным хвостом.
+
+        Если control flow сложнее - возвращаем null.
+     */
+    private BlockStmt buildStructuredLoopBody(List<BasicBlock> bodyBlocks,
+                                              LocalNameProvider localNames,
+                                              ConstantPool cp) {
+        // Собираем инструкции тела
+        List<Insn> bodyInsns = new ArrayList<>();
+        for (BasicBlock bb : bodyBlocks) {
+            bodyInsns.addAll(bb.instructions());
+        }
+        if (bodyInsns.isEmpty()) {
+            return new BlockStmt();
+        }
+
+        // Проверим, есть ли вообще прыжки
+        boolean hasCf = hasControlFlow(bodyInsns);
+
+        // Если нет прыжков - можно честно линейно интерпретировать
+        if (!hasCf) {
+            ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options, null);
+            return safeBuildBlock(exprBuilder, bodyInsns);
+        }
+
+        // Есть какой-то control flow - строим под-CFG
+        ControlFlowGraph subCfg = cfgBuilder.buildFromInsns(bodyInsns);
+        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options, null);
+
+        List<BasicBlock> blocks = subCfg.blocks();
+        if (blocks.isEmpty()) {
+            return new BlockStmt();
+        }
+
+        BasicBlock entry = subCfg.entryBlock();
+        if (entry == null) return null;
+
+        var entryInsns = entry.instructions();
+        if (entryInsns.isEmpty()) return null;
+
+        Insn last = entryInsns.getLast();
+        if (!(last instanceof JumpInsn j) || !JDUtils.isConditional(j.opcode())) {
+            // Пока поддерживаем только if-паттерны в начале тела
+            return null;
+        }
+
+        if (entry.successors().size() != 2) {
+            return null;
+        }
+
+        BasicBlock s0 = entry.successors().get(0);
+        BasicBlock s1 = entry.successors().get(1);
+
+        // Разбираем: jumpTarget / fallthrough
+        BasicBlock jumpSucc;
+        BasicBlock fallthrough;
+        if (j.targetOffset() == s0.startOffset()) {
+            jumpSucc = s0;
+            fallthrough = s1;
+        } else if (j.targetOffset() == s1.startOffset()) {
+            jumpSucc = s1;
+            fallthrough = s0;
+        } else {
+            return null;
+        }
+
+        BlockStmt body = new BlockStmt();
+
+        // 1. Префикс entry до JumpInsn
+        if (entryInsns.size() > 1) {
+            List<Insn> prefixInsns = entryInsns.subList(0, entryInsns.size() - 1);
+            if (!prefixInsns.isEmpty()) {
+                BlockStmt prefixAst = safeBuildBlock(exprBuilder, prefixInsns);
+                if (prefixAst == null) return null;
+                prefixAst.statements().forEach(body::add);
+            }
+        }
+
+        // Попробуем два паттерна: if-else с join'ом и простой if
+
+        // --- if-else с join-блоком ---
+        if (!containsJump(fallthrough) && !containsJump(jumpSucc) &&
+                fallthrough.successors().size() == 1 && jumpSucc.successors().size() == 1 &&
+                fallthrough.successors().getFirst() == jumpSucc.successors().getFirst()) {
+
+            BasicBlock join = fallthrough.successors().getFirst();
+
+            // Убедимся, что join не имеет других предков, кроме этих двух
+            int preds = 0;
+            for (BasicBlock bb : blocks) {
+                if (bb.successors().contains(join)) preds++;
+            }
+            if (preds != 2) {
+                return null;
+            }
+
+            // Условие для fallthrough-ветки (then)
+            Deque<Expr> stackBefore = exprBuilder.simulateStackBeforeBranch(entryInsns);
+            Expr cond = buildIfConditionForFallthrough(j, stackBefore);
+            if (cond == null) return null;
+
+            BlockStmt thenAst = safeBuildBlock(exprBuilder, fallthrough.instructions());
+            BlockStmt elseAst = safeBuildBlock(exprBuilder, jumpSucc.instructions());
+            if (thenAst == null || elseAst == null) return null;
+
+            body.add(new IfStmt(cond, thenAst, elseAst));
+
+            // хвост с join и дальше - без новых прыжков
+            int joinIndex = blocks.indexOf(join);
+            if (joinIndex < 0) return null;
+
+            for (int k = joinIndex; k < blocks.size(); k++) {
+                BasicBlock bb = blocks.get(k);
+                if (containsJump(bb)) {
+                    return null;
+                }
+                BlockStmt tailAst = safeBuildBlock(exprBuilder, bb.instructions());
+                if (tailAst == null) return null;
+
+                tailAst.statements().forEach(body::add);
+            }
+
+            return body;
+        }
+
+        // --- простой if без else ---
+        // then = ветка перехода, join = другая
+        BasicBlock thenBlock;
+        BasicBlock joinBlock;
+        if (j.targetOffset() == s0.startOffset()) {
+            thenBlock = s0;
+            joinBlock = s1;
+        } else if (j.targetOffset() == s1.startOffset()) {
+            thenBlock = s1;
+            joinBlock = s0;
+        } else {
+            return null;
+        }
+
+        if (endsWithReturn(thenBlock)) {
+            // это больше похоже на guard, чем на 'if внутри while" - не трогаем
+            return null;
+        }
+
+        if (containsJump(thenBlock) || containsJump(joinBlock)) {
+            return null;
+        }
+
+        // Строим условие для ветки перехода
+        Deque<Expr> stackBefore = exprBuilder.simulateStackBeforeBranch(entryInsns);
+        Expr cond = buildConditionExpr(j, stackBefore);
+        if (cond == null) return null;
+
+        BlockStmt thenAst = exprBuilder.buildBlock(thenBlock.instructions());
+        body.add(new IfStmt(cond, thenAst, null));
+
+        int joinIndex = blocks.indexOf(joinBlock);
+        if (joinIndex < 0) return null;
+
+        for (int k = joinIndex; k < blocks.size(); k++) {
+            BasicBlock bb = blocks.get(k);
+            if (containsJump(bb)) {
+                return null;
+            }
+            BlockStmt tailAst = exprBuilder.buildBlock(bb.instructions());
+            tailAst.statements().forEach(body::add);
+        }
+
+        return body;
     }
 
     private MethodAst postProcessLoops(MethodAst ast) {
@@ -1025,63 +1400,138 @@ public final class MethodDecompiler {
     }
 
     /*
-        Пытаемся собрать линейное тело цикла, начиная с bodyEntry:
-        bodyEntry -> ... -> ... -> lastBodyBlock -> condBlock
+        Собираем тело цикла как множество блоков, начиная с bodyEntry.
 
-        Требования:
-        - в теле нет ветвлений (каждый блок имеет ровно одного successor'а);
-        - последний блок в цепочке ведет обратно в condBlock;
-        - нет циклов внутри тела (кроме обратного ребра на condBlock).
+        Разрешаем:
+        - переходы внутри body;
+        - back-edge в condBlock;
+        - выход в exitBlock.
 
-        Если паттерн не совпал - возвращаем null.
+        Запрещаем:
+        - любые переходы в другие блоки вне {body, condBlock, exitBlock}.
+
+        Если нет back-edge-а в condBlock, или есть странные ребра наружу, возвращаем null.
      */
-    private List<BasicBlock> collectLinearLoopBody(BasicBlock condBlock, BasicBlock bodyEntry) {
-        List<BasicBlock> body = new ArrayList<>();
-        BasicBlock current = bodyEntry;
+    private List<BasicBlock> collectLoopBody(BasicBlock condBlock,
+                                             BasicBlock bodyEntry,
+                                             BasicBlock exitBlock) {
+        // Хотим детерминированный порядок: LinkedHashSet + сортировка по offset
+        Set<BasicBlock> bodySet = new LinkedHashSet<>();
+        Deque<BasicBlock> work = new ArrayDeque<>();
+        work.add(bodyEntry);
 
-        // Защита от зацикливания
-        var visited = new HashSet<>();
+        boolean hasBackEdge = false;
 
-        while (true) {
-            if (!visited.add(current)) {
-                // цикл внутри тела (не через condBlock) - не наш кейс
-                return null;
+        while (!work.isEmpty()) {
+            BasicBlock bb = work.pop();
+            if (!bodySet.add(bb)) {
+                // уже отработали
+                continue;
             }
 
-            body.add(current);
-
-            var succs = current.successors();
-            if (succs.isEmpty()) {
-                // тупик, так и не дошли до condBlock
-                return null;
+            for (BasicBlock succ : bb.successors()) {
+                if (succ == condBlock) {
+                    // back-edge
+                    hasBackEdge = true;
+                    continue;
+                }
+                if (succ == exitBlock) {
+                    // выход из тела цикла - допустимо
+                    continue;
+                }
+                // иначе это "внутренний" блок тела - обрабатываем его
+                work.add(succ);
             }
-            if (succs.size() > 1) {
-                // ветвление внутри тела - пока не поддерживаем
-                return null;
-            }
-
-            BasicBlock next = succs.getFirst();
-            if (next == condBlock) {
-                // нашли back-edge: current -> condBlock
-                break;
-            }
-
-            current = next;
         }
 
-        // Доп. проверка: последний блок действительно заканчивается
-        // goto condBlock, а не чем-то странным.
-        BasicBlock lastBody = body.getLast();
-        var insns = lastBody.instructions();
-        if (insns.isEmpty()) {
-            return null;
-        }
-        Insn last = insns.getLast();
-        if (!(last instanceof JumpInsn j) || j.opcode() != Opcode.GOTO ||
-                j.targetOffset() != condBlock.startOffset()) {
+        if (!hasBackEdge) {
+            // мы обошли тело, но ни разу не увидели ребра назад в condBlock - не цикл
             return null;
         }
 
+        // Доп. проверка: нет ли ребер из тела в левом месте
+        for (BasicBlock bb : bodySet) {
+            for (BasicBlock succ : bb.successors()) {
+                if (succ != condBlock && succ != exitBlock && !bodySet.contains(succ)) {
+                    // кто-то внутри тела прыгает наружу в непонятный блок - лучше не связываться
+                    return null;
+                }
+            }
+        }
+
+        List<BasicBlock> body = new ArrayList<>(bodySet);
+        body.sort(Comparator.comparingInt(BasicBlock::startOffset));
         return body;
+    }
+
+    /*
+        Есть ли в CFG "обратные" ребра (succ.offset < bb.offset),
+        которые мы считаем кандидатом в цикл.
+     */
+    private boolean hasBackEdge(ControlFlowGraph cfg) {
+        for (BasicBlock bb : cfg.blocks()) {
+            for (BasicBlock succ : bb.successors()) {
+                if (succ.startOffset() < bb.startOffset()) return true;
+            }
+        }
+        return false;
+    }
+
+    private BasicBlock nextLinearSuccessor(BasicBlock bb) {
+        var succs = bb.successors();
+        if (succs.size() == 1) return succs.getFirst();
+        return null;
+    }
+
+    /*
+        Ищем join-блок для простого ромба:
+          header
+           /  \
+         then else
+           \  /
+           join
+
+        Возвращаем join, если обе ветки fallthrough/jumpSucc имеют
+        ровно одного successor'а и это один и тот же блок.
+     */
+    private BasicBlock findJoinForDiamond(BasicBlock fallthrough,
+                                          BasicBlock jumpSucc,
+                                          List<BasicBlock> allBlocks) {
+        if (fallthrough.successors().size() != 1 || jumpSucc.successors().size() != 1) {
+            return null;
+        }
+        BasicBlock j1 = fallthrough.successors().getFirst();
+        BasicBlock j2 = jumpSucc.successors().getFirst();
+        if (j1 != j2) {
+            return null;
+        }
+
+        BasicBlock join = j1;
+
+        // Дополнительно убедимся, что join не используется кучей других предков,
+        // чтобы не перехватить "общий" блок, в который сходятся еще какие-то ветки.
+        int preds = 0;
+        for (BasicBlock bb : allBlocks) {
+            if (bb.successors().contains(join)) {
+                preds++;
+            }
+        }
+
+        if (preds != 2) {
+            return null;
+        }
+
+        return join;
+    }
+
+    private BlockStmt safeBuildBlock(ExpressionBuilder exprBuilder, List<Insn> insns) {
+        try {
+            return exprBuilder.buildBlock(insns);
+        } catch (NoSuchElementException e) {
+            // Значит, мы попытались интерпретировать блок
+            // с неподдерживаемым стеком на входе.
+            // Для структуризации считаем паттерн "не наш".
+            return null;
+        }
     }
 }
