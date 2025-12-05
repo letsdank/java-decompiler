@@ -60,10 +60,20 @@ public final class MethodDecompiler {
 
         byte[] code = codeAttr.code();
 
-        // 1. Строим CFG
+        // Декодируем один раз
+        BytecodeDecoder decoder = new BytecodeDecoder();
+        List<Insn> insns = decoder.decode(code);
+
+        // 1. Попытка распознать простой try/catch на уровне метода
+        MethodAst tryCatchAst = tryBuildSingleTryCatch(method, cf, codeAttr, insns, localNames, cp, bootstrap, name, desc);
+        if (tryCatchAst != null) {
+            return postProcessLoops(tryCatchAst);
+        }
+
+        // 2. Строим CFG
         ControlFlowGraph cfg = cfgBuilder.build(code);
 
-        // 1.1. Попытка рекурсивной структуризации для ацикличных графов:
+        // 2.1. Попытка рекурсивной структуризации для ацикличных графов:
         //      if/if-else/последовательности без циклов.
         if (!hasBackEdge(cfg)) {
             MethodAst structured = tryStructurizeAcyclicCfg(cfg, localNames, cp, options, bootstrap, name, desc);
@@ -72,7 +82,7 @@ public final class MethodDecompiler {
             }
         }
 
-        // 2. Попытка распознать простой while
+        // 3. Попытка распознать простой while
         LoopStmt loop = tryBuildWhileLoop(cfg, localNames, cp);
         if (loop != null) {
             BlockStmt body = new BlockStmt();
@@ -80,17 +90,13 @@ public final class MethodDecompiler {
             return postProcessLoops(new MethodAst(name, desc, body));
         }
 
-        // 3. if/else через CFG
+        // 4. if/else через CFG
         IfStmt ifStmt = tryBuildIfFromCfg(cfg, localNames, cp);
         if (ifStmt != null) {
             BlockStmt body = new BlockStmt();
             body.add(ifStmt);
             return postProcessLoops(new MethodAst(name, desc, body));
         }
-
-        // 3. Строим линейный AST по всему байткоду
-        BytecodeDecoder decoder = new BytecodeDecoder();
-        List<Insn> insns = decoder.decode(code);
 
         // Если в методе вообще нет условные/безусловных переходов -
         // его можно честно разобрать линейным стековым интерпретатором.
@@ -836,6 +842,99 @@ public final class MethodDecompiler {
         return new MethodAst(name, desc, body);
     }
 
+    private MethodAst tryBuildSingleTryCatch(MethodInfo method,
+                                             ClassFile cf,
+                                             CodeAttribute codeAttr,
+                                             List<Insn> insns,
+                                             LocalNameProvider localNames,
+                                             ConstantPool cp,
+                                             BootstrapMethodsAttribute boostrap,
+                                             String name, String desc) {
+        var exTable = codeAttr.exceptionTable();
+        if (exTable == null || exTable.size() != 1) {
+            return null;
+        }
+
+        var e = exTable.getFirst();
+        if (e.catchTypeIndex() == 0) {
+            // finally / синтетика - на этом этапе не трогаем
+            return null;
+        }
+
+        // Очень простой паттерн: один try/catch на весь метод
+        // Без вложенных обработчиков. Если в таблице больше записей
+        // или странные start/end, лучше не связываться.
+        if (e.startPc() < 0 || e.handlerPc() <= e.startPc()) {
+            return null;
+        }
+
+        // Разбиваем общий список insns по offset'ам.
+        List<Insn> preInsns = new ArrayList<>();
+        List<Insn> tryInsns = new ArrayList<>();
+        List<Insn> catchInsns = new ArrayList<>();
+
+        for (Insn insn : insns) {
+            int off = insn.offset();
+
+            if (off < e.startPc()) {
+                preInsns.add(insn);
+            } else if (off < e.handlerPc()) {
+                // все между startPc и handlerPc считаем частью try-блока
+                tryInsns.add(insn);
+            } else {
+                catchInsns.add(insn);
+            }
+        }
+
+        if (tryInsns.isEmpty() || catchInsns.isEmpty()) {
+            // слишком странный метод - ничего не делаем
+            return null;
+        }
+
+        ExpressionBuilder builder = new ExpressionBuilder(localNames, cp, options, boostrap);
+
+        BlockStmt preAst = preInsns.isEmpty() ? new BlockStmt() : builder.buildBlock(preInsns);
+        BlockStmt tryAst = builder.buildBlock(tryInsns);
+        BlockStmt catchAst = builder.buildBlock(catchInsns);
+
+        // Попробуем вынести общий эпилог "return ..." из конца catch-блока
+        var catchStmts = catchAst.statements();
+        BlockStmt catchBody;
+        BlockStmt epilogue = new BlockStmt();
+
+        if (!catchStmts.isEmpty() && catchStmts.getLast() instanceof ReturnStmt ret) {
+            // catch-часть без финального return
+            catchBody = new BlockStmt(new ArrayList<>(catchStmts.subList(0, catchStmts.size() - 1)));
+            epilogue.add(ret);
+        } else {
+            catchBody = catchAst;
+        }
+
+        // Восстанавливаем тип исключение из constant pool
+        String exceptionInternalName = cp.getClassName(e.catchTypeIndex());
+        String exceptionType = exceptionInternalName.replace('/', '.');
+
+        // Иия переменной для catch - просто "e" (KISS)
+        String exceptionVarName = "e";
+
+        BlockStmt body = new BlockStmt();
+
+        // pre-код (если был) до try/catch
+        for (Stmt s : preAst.statements()) {
+            body.add(s);
+        }
+
+        // Сам try/catch
+        body.add(new TryCatchStmt(tryAst, exceptionType, exceptionVarName, catchBody));
+
+        // Эпилог (общий return/null и прочее после try/catch)
+        for (Stmt s : epilogue.statements()) {
+            body.add(s);
+        }
+
+        return new MethodAst(name, desc, body);
+    }
+
     /*
         Рекурсивно строим BlockStmt, начиная с блока start,
         пока не дойдем до:
@@ -1347,6 +1446,12 @@ public final class MethodDecompiler {
                 }
 
                 result.add(normalized);
+            } else if (s instanceof TryCatchStmt tcs) {
+                BlockStmt tryT = transformBlock(tcs.tryBlock(), returnsBoolean);
+                BlockStmt catchT = tcs.catchBlock() != null
+                        ? transformBlock(tcs.catchBlock(), returnsBoolean)
+                        : null;
+                result.add(new TryCatchStmt(tryT, tcs.exceptionType(), tcs.exceptionVarName(), catchT));
             } else {
                 result.add(s);
             }

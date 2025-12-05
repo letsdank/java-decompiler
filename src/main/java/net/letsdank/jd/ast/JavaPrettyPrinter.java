@@ -115,6 +115,8 @@ public final class JavaPrettyPrinter {
             printReturn(rs);
         } else if (stmt instanceof ExprStmt es) {
             printExprStmt(es);
+        } else if (stmt instanceof TryCatchStmt tcs) {
+            printTryCatchStmt(tcs);
         } else {
             // временный fallback, чтобы видеть неожиданные типы
             appendLine("// TODO: " + stmt.getClass().getSimpleName() + " -> " + stmt);
@@ -189,6 +191,25 @@ public final class JavaPrettyPrinter {
 
     private void printExprStmt(ExprStmt es) {
         appendLine(es.expr().toString() + ";");
+    }
+
+    private void printTryCatchStmt(TryCatchStmt tcs) {
+        // try {
+        appendLine("try {");
+        indent++;
+        for (Stmt s : tcs.tryBlock().statements()) {
+            printStmt(s);
+        }
+        indent--;
+        appendLine("} catch (" + tcs.exceptionType() + " " + tcs.exceptionVarName() + ") {");
+        indent++;
+        if (tcs.catchBlock() != null) {
+            for (Stmt s : tcs.catchBlock().statements()) {
+                printStmt(s);
+            }
+        }
+        indent--;
+        appendLine("}");
     }
 
     /**
