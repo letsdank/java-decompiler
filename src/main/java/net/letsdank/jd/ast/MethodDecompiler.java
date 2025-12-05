@@ -94,6 +94,12 @@ public final class MethodDecompiler {
             return postProcessLoops(new MethodAst(name, desc, linearBody));
         }
 
+        // Пытаемся распознать простой if (...) { then } в начале метода
+        MethodAst simpleIfAst = tryBuildSimpleIfAtEntry(cfg, localNames, cp, options, bootstrap, name, desc);
+        if (simpleIfAst != null) {
+            return postProcessLoops(simpleIfAst);
+        }
+
         // Пытаемся распознать guard-return по CFG
         MethodAst guardAst = tryBuildGuardReturnAtEntry(cfg, localNames, cp, options, bootstrap, name, desc);
         if (guardAst != null) {
@@ -185,6 +191,8 @@ public final class MethodDecompiler {
     }
 
     private IfStmt tryBuildIfFromCfg(ControlFlowGraph cfg, LocalNameProvider localNames, ConstantPool cp) {
+        BasicBlock entry = cfg.entryBlock();
+
         for (BasicBlock condBlock : cfg.blocks()) {
             var insns = condBlock.instructions();
             if (insns.isEmpty()) continue;
@@ -192,6 +200,9 @@ public final class MethodDecompiler {
             Insn last = insns.getLast();
             if (!(last instanceof JumpInsn j) || !JDUtils.isConditional(j.opcode())) continue;
             if (condBlock.successors().size() != 2) continue;
+
+            // if по CFG распознаем только если это условие в самом начале метода
+            if (condBlock != entry) continue;
 
             BasicBlock s0 = condBlock.successors().get(0);
             BasicBlock s1 = condBlock.successors().get(1);
@@ -290,6 +301,110 @@ public final class MethodDecompiler {
         }
 
         return null;
+    }
+
+    private MethodAst tryBuildSimpleIfAtEntry(ControlFlowGraph cfg, LocalNameProvider localNames,
+                                              ConstantPool cp, DecompilerOptions options,
+                                              BootstrapMethodsAttribute boostrap, String name, String desc) {
+        List<BasicBlock> blocks = cfg.blocks();
+        if (blocks.isEmpty()) return null;
+
+        BasicBlock entry = cfg.entryBlock();
+        if (entry == null) return null;
+
+        int entryIndex = blocks.indexOf(entry);
+        if (entryIndex < 0) return null;
+
+        var entryInsns = entry.instructions();
+        if (entryInsns.isEmpty()) return null;
+
+        Insn last = entryInsns.getLast();
+        if (!(last instanceof JumpInsn j) || !JDUtils.isConditional(j.opcode())) {
+            return null;
+        }
+
+        if (entry.successors().size() != 2) {
+            return null;
+        }
+
+        BasicBlock s0 = entry.successors().get(0);
+        BasicBlock s1 = entry.successors().get(1);
+
+        // Определяем thenBlock и joinBlock так, чтобы thenBlock был именной веткой перехода
+        BasicBlock thenBlock;
+        BasicBlock joinBlock;
+
+        if (j.targetOffset() == s0.startOffset()) {
+            thenBlock = s0;
+            joinBlock = s1;
+        } else if (j.targetOffset() == s1.startOffset()) {
+            thenBlock = s1;
+            joinBlock = s0;
+        } else {
+            // target не совпадает ни с одним successor'ом - странный CFG
+            return null;
+        }
+
+        // Не лезем в guard-return: thenBlock не должен заканчиваться return
+        if (endsWithReturn(thenBlock)) {
+            return null;
+        }
+
+        // Требуем простой линейной формы:
+        // entry -> thenBlock -> joinBlock, без дополнительных веток.
+        int thenIndex = blocks.indexOf(thenBlock);
+        int joinIndex = blocks.indexOf(joinBlock);
+        if (thenIndex < 0 || joinIndex < 0) return null;
+
+        // Хотим порядок entry, then, join как три первых блока
+        if (!(entryIndex == 0 && thenIndex == 1 && joinIndex == 2)) {
+            return null;
+        }
+
+        // Больше трех блоков в CFG пока не поддерживаем в этом паттерне
+        if (blocks.size() > 3) {
+            return null;
+        }
+
+        // thenBlock и joinBlock не должны иметь своих jumps (только fallthrough или return)
+        if (containsJump(thenBlock)) {
+            return null;
+        }
+        if (containsJump(joinBlock)) {
+            // Разрешим только return в конце joinBlock (он не JumpInsn, а SimpleInsn)
+            // поэтому containsJump == true значит, что блок кончается условным/безусловным переходом.
+            return null;
+        }
+
+        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options, boostrap);
+        BlockStmt body = new BlockStmt();
+
+        // 1. Префикс entry-блока до JumpInsn -> обычный линейный код
+        if (entryInsns.size() > 1) {
+            List<Insn> prefixInsns = entryInsns.subList(0, entryInsns.size() - 1);
+            if (!prefixInsns.isEmpty()) {
+                BlockStmt prefixAst = exprBuilder.buildBlock(prefixInsns);
+                prefixAst.statements().forEach(body::add);
+            }
+        }
+
+        // 2. Условие: ветка перехода ведет в thenBlock
+        Deque<Expr> stackBefore = exprBuilder.simulateStackBeforeBranch(entryInsns);
+        Expr condExpr = buildConditionExpr(j, stackBefore);
+        if (condExpr == null) {
+            return null;
+        }
+
+        // 3. Тело then-блока
+        BlockStmt thenAst = exprBuilder.buildBlock(thenBlock.instructions());
+        IfStmt ifStmt = new IfStmt(condExpr, thenAst, null);
+        body.add(ifStmt);
+
+        // 4. Остальной код: joinBlock как хвост
+        BlockStmt tailAst = exprBuilder.buildBlock(joinBlock.instructions());
+        tailAst.statements().forEach(body::add);
+
+        return new MethodAst(name, desc, body);
     }
 
     private MethodAst tryBuildGuardReturnAtEntry(ControlFlowGraph cfg, LocalNameProvider localNames,
