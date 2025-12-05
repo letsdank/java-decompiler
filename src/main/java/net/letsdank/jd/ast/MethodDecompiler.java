@@ -295,108 +295,121 @@ public final class MethodDecompiler {
     private MethodAst tryBuildGuardReturnAtEntry(ControlFlowGraph cfg, LocalNameProvider localNames,
                                                  ConstantPool cp, DecompilerOptions options,
                                                  BootstrapMethodsAttribute bootstrap, String name, String desc) {
+        List<BasicBlock> blocks = cfg.blocks();
+        if (blocks.isEmpty()) return null;
+
         BasicBlock entry = cfg.entryBlock();
         if (entry == null) return null;
 
-        var entryInsns = entry.instructions();
-        if (entryInsns.isEmpty()) return null;
-
-        Insn last = entryInsns.getLast();
-        if (!(last instanceof JumpInsn j) || !JDUtils.isConditional(j.opcode())) {
-            return null;
-        }
-
-        if (entry.successors().size() != 2) {
-            return null;
-        }
-
-        BasicBlock s0 = entry.successors().get(0);
-        BasicBlock s1 = entry.successors().get(1);
-
-        // Определяем, какой successor - прыжок, а какой - fallthrough
-        BasicBlock jumpSucc;
-        BasicBlock fallthrough;
-        if (s0.startOffset() == j.targetOffset()) {
-            jumpSucc = s0;
-            fallthrough = s1;
-        } else if (s1.startOffset() == j.targetOffset()) {
-            jumpSucc = s1;
-            fallthrough = s0;
-        } else {
-            // странный CFG, не наш случай
-            return null;
-        }
-
-        // Блок-guard: тот, который заканчивается return
-        BasicBlock guardBlock;
-        BasicBlock contBlock;
-
-        if (endsWithReturn(jumpSucc)) {
-            guardBlock = jumpSucc;
-            contBlock = fallthrough;
-        } else if (endsWithReturn(fallthrough)) {
-            guardBlock = fallthrough;
-            contBlock = jumpSucc;
-        } else {
-            return null;
-        }
-
-        // Ограничим сложность: пока поддерживаем случаи, когда после guard-блока
-        // основной код в одном линейном блоке без своих прыжков.
-        if (containsJump(contBlock)) {
-            return null;
-        }
-
-        // Также не лезем, если CFG содержит еще какие-то блоки помимо entry/guard/cont.
-        var blocks = cfg.blocks();
-        if (blocks.size() > 3) {
-            return null;
-        }
+        int entryIndex = blocks.indexOf(entry);
+        if (entryIndex < 0) return null;
 
         ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options, bootstrap);
         BlockStmt body = new BlockStmt();
 
-        // 1. Префикс entry-блока: все инструкции до JumpInsn - это просто линейный код
-        if (entryInsns.size() > 1) {
-            List<Insn> prefixInsns = entryInsns.subList(0, entryInsns.size() - 1);
-            if (!prefixInsns.isEmpty()) {
-                BlockStmt prefixAst = exprBuilder.buildBlock(prefixInsns);
-                prefixAst.statements().forEach(body::add);
+        int i = entryIndex;
+        boolean anyGuard = false;
+
+        // Идем по блокам, начиная с entry, и пытаемся собрать:
+        // if (cond1) return ...;
+        // if (cond2) return ...;
+        // ...
+        while (i < blocks.size()) {
+            BasicBlock bb = blocks.get(i);
+            var insns = bb.instructions();
+            if (insns.isEmpty()) break;
+
+            Insn last = insns.getLast();
+            if (!(last instanceof JumpInsn j) || !JDUtils.isConditional(j.opcode())) {
+                // этот блок больше не guard, отсюда начинается "основное" тело
+                return null;
             }
+
+            if (bb.successors().size() != 2) {
+                return null;
+            }
+
+            BasicBlock s0 = bb.successors().get(0);
+            BasicBlock s1 = bb.successors().get(1);
+
+            // Определяем, какой successor - прыжок, а какой - fallthrough
+            BasicBlock retBlock = null;
+            BasicBlock contBlock = null;
+
+            if (endsWithReturn(s0)) {
+                retBlock = s0;
+                contBlock = s1;
+            } else if (endsWithReturn(s1)) {
+                retBlock = s1;
+                contBlock = s0;
+            } else {
+                // странный CFG, не наш случай
+                break;
+            }
+
+            // прыжок должен вести именно в retBlock (guard = branch)
+            if (j.targetOffset() != retBlock.startOffset()) {
+                break;
+            }
+
+            // требуем линейной формы: contBlock должен быть следующим блоком в списке
+            int nextIndex = i + 1;
+            if (nextIndex >= blocks.size() || blocks.get(nextIndex) != contBlock) {
+                // CFG уже нетривиальная (ветки переплетены) - пока не лезем
+                break;
+            }
+
+            // 1. Префикс entry-блока: все инструкции до JumpInsn - это просто линейный код
+            if (insns.size() > 1) {
+                List<Insn> prefixInsns = insns.subList(0, insns.size() - 1);
+                if (!prefixInsns.isEmpty()) {
+                    BlockStmt prefixAst = exprBuilder.buildBlock(prefixInsns);
+                    prefixAst.statements().forEach(body::add);
+                }
+            }
+
+            // 2. Условие: нужно получить его так, чтобы оно соответствовало ветке,
+            //    которая ведет в guardBlock.
+            Deque<Expr> stackBefore = exprBuilder.simulateStackBeforeBranch(insns);
+            Expr condExpr = buildConditionExpr(j, stackBefore);
+            if (condExpr == null) {
+                break;
+            }
+
+            // 3. AST guard-блока: собираем его как обычный block и забираем ReturnStmt
+            BlockStmt retAst = exprBuilder.buildBlock(retBlock.instructions());
+            ReturnStmt retStmt = extractLastReturn(retAst);
+            if (retStmt == null) {
+                return null;
+            }
+
+            BlockStmt thenBlock = new BlockStmt();
+            thenBlock.add(retStmt);
+            body.add(new IfStmt(condExpr, thenBlock, null));
+
+            anyGuard = true;
+
+            // Переходим к следующему блоку (contBlock), который может быть
+            // либо новым guard'ом, либо уже "основным" кодом
+            i = nextIndex;
         }
 
-        // 2. Условие: нужно получить его так, чтобы оно соответствовало ветке,
-        //    которая ведет в guardBlock.
-        var stackBefore = exprBuilder.simulateStackBeforeBranch(entryInsns);
-
-        Expr condExpr;
-        if (guardBlock == jumpSucc) {
-            // условие для прыжка == guard
-            condExpr = buildConditionExpr(j, stackBefore);
-        } else {
-            // guard = fallthrough-ветка
-            condExpr = buildIfConditionForFallthrough(j, stackBefore);
-        }
-        if (condExpr == null) {
+        if (!anyGuard) {
+            // Даже один guard не собрали - не наш паттерн
             return null;
         }
-
-        // 3. AST guard-блока: собираем его как обычный block и забираем ReturnStmt
-        BlockStmt guardAst = exprBuilder.buildBlock(guardBlock.instructions());
-        ReturnStmt guardReturn = extractLastReturn(guardAst);
-        if (guardReturn == null) {
-            return null;
-        }
-
-        BlockStmt guardThen = new BlockStmt();
-        guardThen.add(guardReturn);
-
-        IfStmt guardIf = new IfStmt(condExpr, guardThen, null);
-        body.add(guardIf);
 
         // 4. Основной код: просто линейно расписываем contBlock
-        BlockStmt contAst = exprBuilder.buildBlock(contBlock.instructions());
-        contAst.statements().forEach(body::add);
+        // Сейчас поддерживаем только полностью линейный хвост без новых JumpInsn.
+        for (int k = i; k < blocks.size(); k++) {
+            BasicBlock bb = blocks.get(k);
+            if (containsJump(bb)) {
+                // дальше начинается сложный control flow - лучше честно откатиться
+                return null;
+            }
+            BlockStmt tailAst = exprBuilder.buildBlock(bb.instructions());
+            tailAst.statements().forEach(body::add);
+        }
 
         return new MethodAst(name, desc, body);
     }
