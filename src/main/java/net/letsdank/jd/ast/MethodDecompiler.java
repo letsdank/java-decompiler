@@ -11,11 +11,11 @@ import net.letsdank.jd.cfg.BasicBlock;
 import net.letsdank.jd.cfg.CfgBuilder;
 import net.letsdank.jd.cfg.ControlFlowGraph;
 import net.letsdank.jd.model.ClassFile;
+import net.letsdank.jd.model.ConstantPool;
+import net.letsdank.jd.model.MethodInfo;
 import net.letsdank.jd.model.attribute.AttributeInfo;
 import net.letsdank.jd.model.attribute.BootstrapMethodsAttribute;
 import net.letsdank.jd.model.attribute.CodeAttribute;
-import net.letsdank.jd.model.ConstantPool;
-import net.letsdank.jd.model.MethodInfo;
 import net.letsdank.jd.utils.JDUtils;
 
 import java.util.*;
@@ -109,12 +109,27 @@ public final class MethodDecompiler {
             return postProcessLoops(guardAst);
         }
 
-        // ИНАЧЕ: сложный control flow - пока не пытаемся притворяться умными.
-        BlockStmt placeholder = new BlockStmt();
-        placeholder.add(new ExprStmt(
-                new VarExpr("// TODO: complex control flow (experimental decompiler skipped)")
+        // ИНАЧЕ: сложный control flow.
+        // Вместо того чтобы вообще ничего не показывать, честно линейно
+        // интерпретируем байткод и предупреждаем, что семантика может
+        // не соответствовать реальному control flow.
+
+        ExpressionBuilder fallbackBuilder = new ExpressionBuilder(localNames, cp, options, bootstrap);
+        BlockStmt linearBody = fallbackBuilder.buildBlock(insns);
+
+        // Оборачиваем в комментарий-предупреждение
+        BlockStmt withWarning = new BlockStmt();
+        withWarning.add(new ExprStmt(
+                new StringLiteralExpr("/* WARNING: complex control flow; linearized bytecode only, semantics may be inaccurate */")
         ));
-        return new MethodAst(name, desc, placeholder);
+        for (Stmt s : linearBody.statements()) {
+            withWarning.add(s);
+        }
+
+        // ВАЖНО: здесь НЕ вызываем postProcessLoops,
+        // чтобы не пытаться "узнавать" while/if/for там,
+        // где мы уже объявили код "слишком сложным".
+        return new MethodAst(name, desc, withWarning);
     }
 
     /**
@@ -396,16 +411,6 @@ public final class MethodDecompiler {
         int joinIndex = blocks.indexOf(joinBlock);
         if (thenIndex < 0 || joinIndex < 0) return null;
 
-        // Хотим порядок entry, then, join как три первых блока
-        if (!(entryIndex == 0 && thenIndex == 1 && joinIndex == 2)) {
-            return null;
-        }
-
-        // Больше трех блоков в CFG пока не поддерживаем в этом паттерне
-        if (blocks.size() > 3) {
-            return null;
-        }
-
         // thenBlock и joinBlock не должны иметь своих jumps (только fallthrough или return)
         if (containsJump(thenBlock)) {
             return null;
@@ -441,8 +446,15 @@ public final class MethodDecompiler {
         body.add(ifStmt);
 
         // 4. Остальной код: joinBlock как хвост
-        BlockStmt tailAst = exprBuilder.buildBlock(joinBlock.instructions());
-        tailAst.statements().forEach(body::add);
+        for (int k = joinIndex; k < blocks.size(); k++) {
+            BasicBlock bb = blocks.get(k);
+            if (containsJump(bb)) {
+                // дальше начинается сложный control flow - лучше отступить
+                return null;
+            }
+            BlockStmt tailAst = exprBuilder.buildBlock(bb.instructions());
+            tailAst.statements().forEach(body::add);
+        }
 
         return new MethodAst(name, desc, body);
     }
@@ -641,12 +653,6 @@ public final class MethodDecompiler {
             return null;
         }
 
-        // Для первого шага ограничимся компактным CFG:
-        // entry, then, else, join (3-4 блока максимум)
-        if (blocks.size() > 4) {
-            return null;
-        }
-
         ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options, bootstrap);
         BlockStmt body = new BlockStmt();
 
@@ -673,13 +679,21 @@ public final class MethodDecompiler {
         IfStmt ifStmt = new IfStmt(condExpr, thenAst, elseAst);
         body.add(ifStmt);
 
-        // 4. Хвост: joinBlock (без ветвлений внутрь)
-        if (containsJump(joinBlock)) {
-            // Пока не лезем в ветвящийся хвост
+        // 4. Хвост: joinBlock и все последующие блоки, пока они линейные (без jump)
+        int joinIndex = blocks.indexOf(joinBlock);
+        if (joinIndex < 0) {
             return null;
         }
-        BlockStmt tailAst = exprBuilder.buildBlock(joinBlock.instructions());
-        tailAst.statements().forEach(body::add);
+
+        for (int k = joinIndex; k < blocks.size(); k++) {
+            BasicBlock bb = blocks.get(k);
+            if (containsJump(joinBlock)) {
+                // как только встретили новый переход - лучше отдать метод в общий fallback
+                return null;
+            }
+            BlockStmt tailAst = exprBuilder.buildBlock(bb.instructions());
+            tailAst.statements().forEach(body::add);
+        }
 
         return new MethodAst(name, desc, body);
     }
