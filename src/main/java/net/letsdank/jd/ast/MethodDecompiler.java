@@ -179,7 +179,7 @@ public final class MethodDecompiler {
                 return new BinaryExpr("<=", x, new IntConstExpr(0));
             }
 
-            // --- бинарные IF_ICMPxx ---
+            // --- бинарные IF_ICMPxx (int-сравнения) ---
             case IF_ICMPEQ -> {
                 Expr right = stack.pop();
                 Expr left = stack.pop();
@@ -209,6 +209,18 @@ public final class MethodDecompiler {
                 Expr right = stack.pop();
                 Expr left = stack.pop();
                 return new BinaryExpr("<=", left, right);
+            }
+
+            // --- ссылочные сравнения IF_ACMPxx ---
+            case IF_ACMPEQ -> {
+                Expr right = stack.pop();
+                Expr left = stack.pop();
+                return new BinaryExpr("==", left, right);
+            }
+            case IF_ACMPNE -> {
+                Expr right = stack.pop();
+                Expr left = stack.pop();
+                return new BinaryExpr("!=", left, right);
             }
 
             default -> {
@@ -1019,6 +1031,18 @@ public final class MethodDecompiler {
                     default -> null;
                 };
             }
+
+            // Ссылочные IF_ACMPxx: инвертируем так же, как int
+            case IF_ACMPEQ, IF_ACMPNE -> {
+                Expr right = stack.pop();
+                Expr left = stack.pop();
+                return switch (op) {
+                    case IF_ACMPEQ -> new BinaryExpr("!=", left, right); // !(a == b) -> a != b
+                    case IF_ACMPNE -> new BinaryExpr("==", left, right); // !(a != b) -> a == b
+                    default -> null;
+                };
+            }
+
             default -> {
                 // Для унарных IFxx x < 0 / x >= 0 / x == 0 / x != 0
                 Expr x = stack.pop();

@@ -683,7 +683,7 @@ public final class ExpressionBuilder {
 
     /**
      * Вспомогательный метод: симуляция стека до JumpInsn, чтобы вытащить
-     * операнды условия. Нужен для if/if_icmp.
+     * операнды условия. Нужен для if/if_icmp и прочих IFxx.
      */
     public Deque<Expr> simulateStackBeforeBranch(List<Insn> insns) {
         Deque<Expr> stack = new ArrayDeque<>();
@@ -695,19 +695,69 @@ public final class ExpressionBuilder {
 
             if (insn instanceof SimpleInsn s) {
                 switch (s.opcode()) {
+                    // арифметика
                     case IADD -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
                         stack.push(new BinaryExpr("+", left, right));
+                    }
+                    case ISUB -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("-", left, right));
                     }
                     case IMUL -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
                         stack.push(new BinaryExpr("*", left, right));
                     }
+                    case IDIV -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("/", left, right));
+                    }
+                    case IREM -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("%", left, right));
+                    }
                     case INEG -> {
                         Expr v = stack.pop();
                         stack.push(new UnaryExpr("-", v));
+                    }
+
+                    // побитовые операции
+                    case IAND -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("&", left, right));
+                    }
+                    case IOR -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("|", left, right));
+                    }
+                    case IXOR -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("^", left, right));
+                    }
+
+                    // сдвиги
+                    case ISHL -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr("<<", left, right));
+                    }
+                    case ISHR -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr(">>", left, right));
+                    }
+                    case IUSHR -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        stack.push(new BinaryExpr(">>>", left, right));
                     }
 
                     // iconst_*
@@ -736,6 +786,8 @@ public final class ExpressionBuilder {
                         Expr array = stack.pop();
                         stack.push(new ArrayLengthExpr(array));
                     }
+
+                    // стековые операции
                     case POP -> {
                         if (!stack.isEmpty()) {
                             stack.pop();
@@ -748,6 +800,7 @@ public final class ExpressionBuilder {
                     }
 
                     default -> {
+                        // остальные SimpleInsn для целей условия пока игнорируем
                     }
                 }
             } else if (insn instanceof LocalVarInsn lv) {
@@ -769,7 +822,24 @@ public final class ExpressionBuilder {
                     default -> {
                     }
                 }
+            } else if (insn instanceof ConstantPoolInsn cpi) {
+                // Иногда условие завязано на ldc-константах
+                switch (cpi.opcode()) {
+                    case LDC -> {
+                        CpInfo entry = cp.entry(cpi.cpIndex());
+                        if (entry instanceof CpInteger i) {
+                            stack.push(new IntConstExpr(i.value()));
+                        } else if (entry instanceof CpString s) {
+                            String text = cp.getUtf8(s.stringIndex());
+                            stack.push(new StringLiteralExpr(text));
+                        }
+                        // остальные типы для условий пока можно игнорировать
+                    }
+                    default -> {
+                    }
+                }
             }
+            // IINC и прочее на стек не влияют напрямую - пропускаем
         }
 
         return stack;
