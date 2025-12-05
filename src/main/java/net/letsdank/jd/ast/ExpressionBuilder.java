@@ -462,11 +462,26 @@ public final class ExpressionBuilder {
                         // Спец-кейс: kotlin.jvm.internal.Intrinsics.checkNotNullParameter(...)
                         CpMethodref mr = resolveMethodref(cpi.cpIndex());
                         String ownerInternal = cp.getClassName(mr.classIndex());
+
+                        // 1. Kotlin Intrinsics
                         if (options != null &&
                                 options.hideKotlinIntrinsics() &&
                                 "kotlin/jvm/internal/Intrinsics".equals(ownerInternal) &&
                                 "checkNotNullParameter".equals(methodName)) {
                             // Просто снимаем аргументы со стека и не добавляем statement
+                            for (int i = 0; i < argCount; i++) {
+                                stack.pop();
+                            }
+                            break;
+                        }
+
+                        // 2. Любые статические методы, имя которых начинается на '$'
+                        if (options != null &&
+                                options.hideDollarMethods() &&
+                                methodName != null &&
+                                !methodName.isEmpty() &&
+                                methodName.charAt(0) == '$') {
+                            // Снимаем аргументы со стека, но не создаем ExprStmt/CallExpr.
                             for (int i = 0; i < argCount; i++) {
                                 stack.pop();
                             }

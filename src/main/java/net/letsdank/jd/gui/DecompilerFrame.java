@@ -103,20 +103,35 @@ public final class DecompilerFrame extends JFrame {
         settingsPanel.setLayout(new BoxLayout(settingsPanel, BoxLayout.Y_AXIS));
         settingsPanel.setBorder(BorderFactory.createTitledBorder("Settings"));
 
-        JCheckBox hideIntrinsicsBox = new JCheckBox("Hide Kotlin Intrinsics", decompilerOptions.hideKotlinIntrinsics());
+        JCheckBox hideIntrinsicsBox = new JCheckBox(
+                "Hide Kotlin Intrinsics",
+                decompilerOptions.hideKotlinIntrinsics()
+        );
         hideIntrinsicsBox.addActionListener(e -> {
             decompilerOptions.setHideKotlinIntrinsics(hideIntrinsicsBox.isSelected());
             refreshCurrentSelection();
         });
 
-        JCheckBox useKotlinxMetadataBox = new JCheckBox("Use Kotlin metadata library", true);
+        JCheckBox useKotlinxMetadataBox = new JCheckBox(
+                "Use Kotlin metadata library",
+                decompilerOptions.useKotlinxMetadata());
         useKotlinxMetadataBox.addActionListener(e -> {
             decompilerOptions.setUseKotlinxMetadata(useKotlinxMetadataBox.isSelected());
             refreshCurrentSelection();
         });
 
+        JCheckBox hideDollarMethodsBox = new JCheckBox(
+                "Hide '$...' static calls",
+                decompilerOptions.hideDollarMethods()
+        );
+        hideDollarMethodsBox.addActionListener(e -> {
+            decompilerOptions.setHideDollarMethods(hideDollarMethodsBox.isSelected());
+            refreshCurrentSelection();
+        });
+
         settingsPanel.add(hideIntrinsicsBox);
         settingsPanel.add(useKotlinxMetadataBox);
+        settingsPanel.add(hideDollarMethodsBox);
 
         add(settingsPanel, BorderLayout.EAST);
         pack();
@@ -158,13 +173,13 @@ public final class DecompilerFrame extends JFrame {
 
     private void refreshCurrentSelection() {
         Object node = tree.getLastSelectedPathComponent();
-        if(node == null) return;
+        if (node == null) return;
 
-        if(node instanceof MethodTreeNode mNode) {
+        if (node instanceof MethodTreeNode mNode) {
             showMethodDetails(mNode.classFile(), mNode.method());
         } else if (node instanceof DefaultMutableTreeNode dtmn) {
             Object userObject = dtmn.getUserObject();
-            if(userObject instanceof ClassFile cf) {
+            if (userObject instanceof ClassFile cf) {
                 showClassSummary(cf);
             }
         }

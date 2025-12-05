@@ -14,6 +14,12 @@ public final class DecompilerOptions {
 
     private boolean useKotlinxMetadata = true;
 
+    /**
+     * Прятать ли вызовы статических методов, имя которых начинается на '$'.
+     * Например: $$$reportNull$$$0(...)
+     */
+    private boolean hideDollarMethods = true;
+
     public boolean hideKotlinIntrinsics() {
         return hideKotlinIntrinsics;
     }
@@ -22,12 +28,20 @@ public final class DecompilerOptions {
         return useKotlinxMetadata;
     }
 
+    public boolean hideDollarMethods() {
+        return hideKotlinIntrinsics;
+    }
+
     public void setHideKotlinIntrinsics(boolean hideKotlinIntrinsics) {
         this.hideKotlinIntrinsics = hideKotlinIntrinsics;
     }
 
     public void setUseKotlinxMetadata(boolean useKotlinxMetadata) {
         this.useKotlinxMetadata = useKotlinxMetadata;
+    }
+
+    public void setHideDollarMethods(boolean hideDollarMethods) {
+        this.hideDollarMethods = hideDollarMethods;
     }
 
     // сюда позже можно добавить:
