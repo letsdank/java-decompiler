@@ -94,6 +94,12 @@ public final class MethodDecompiler {
             return postProcessLoops(new MethodAst(name, desc, linearBody));
         }
 
+        // Пытаемся распознать if (...) { then } else { else } с join-блоком
+        MethodAst ifWithJoinAst = tryBuildIfWithJoinAtEntry(cfg, localNames, cp, options, bootstrap, name, desc);
+        if (ifWithJoinAst != null) {
+            return postProcessLoops(ifWithJoinAst);
+        }
+
         // Пытаемся распознать простой if (...) { then } в начале метода
         MethodAst simpleIfAst = tryBuildSimpleIfAtEntry(cfg, localNames, cp, options, bootstrap, name, desc);
         if (simpleIfAst != null) {
@@ -525,6 +531,121 @@ public final class MethodDecompiler {
             BlockStmt tailAst = exprBuilder.buildBlock(bb.instructions());
             tailAst.statements().forEach(body::add);
         }
+
+        return new MethodAst(name, desc, body);
+    }
+
+    private MethodAst tryBuildIfWithJoinAtEntry(ControlFlowGraph cfg, LocalNameProvider localNames,
+                                                ConstantPool cp, DecompilerOptions options,
+                                                BootstrapMethodsAttribute bootstrap, String name, String desc) {
+        List<BasicBlock> blocks = cfg.blocks();
+        if (blocks.isEmpty()) return null;
+
+        BasicBlock entry = cfg.entryBlock();
+        if (entry == null) return null;
+
+        int entryIndex = blocks.indexOf(entry);
+        if (entryIndex < 0) return null;
+
+        var entryInsns = entry.instructions();
+        if (entryInsns.isEmpty()) return null;
+
+        Insn last = entryInsns.getLast();
+        if (!(last instanceof JumpInsn j) || !JDUtils.isConditional(j.opcode())) {
+            return null;
+        }
+
+        if (entry.successors().size() != 2) {
+            return null;
+        }
+
+        BasicBlock s0 = entry.successors().get(0);
+        BasicBlock s1 = entry.successors().get(1);
+
+        // Разбор: таргет прыжка = одна ветка, другая = fallthrough
+        BasicBlock jumpSucc;
+        BasicBlock fallthrough;
+        if (j.targetOffset() == s0.startOffset()) {
+            jumpSucc = s0;
+            fallthrough = s1;
+        } else if (j.targetOffset() == s1.startOffset()) {
+            jumpSucc = s1;
+            fallthrough = s0;
+        } else {
+            // странный граф, не наш кейс
+            return null;
+        }
+
+        BasicBlock thenBlock = fallthrough; // then = fallthrough
+        BasicBlock elseBlock = jumpSucc;    // else = ветка перехода
+
+        // Оба блока должны быть "нормальными" ветками: без собственных переходов
+        if (containsJump(thenBlock) || containsJump(elseBlock)) {
+            return null;
+        }
+
+        // У каждой ветки должен быть ровно один successor -> общий join-блок
+        if (thenBlock.successors().size() != 1 || elseBlock.successors().size() != 1) {
+            return null;
+        }
+        BasicBlock joinFromThen = thenBlock.successors().getFirst();
+        BasicBlock joinFromElse = elseBlock.successors().getFirst();
+        if (joinFromThen != joinFromElse) {
+            return null;
+        }
+        BasicBlock joinBlock = joinFromThen;
+
+        // Проверим, что joinBlock действительно "соединяет" только эти две ветки
+        int preds = 0;
+        for (BasicBlock bb : blocks) {
+            if (bb.successors().contains(joinBlock)) {
+                preds++;
+            }
+        }
+        if (preds != 2) {
+            // joinBlock используется еще кем-то - лучше не лезть
+            return null;
+        }
+
+        // Для первого шага ограничимся компактным CFG:
+        // entry, then, else, join (3-4 блока максимум)
+        if (blocks.size() > 4) {
+            return null;
+        }
+
+        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options, bootstrap);
+        BlockStmt body = new BlockStmt();
+
+        // 1. Префикс entry-блока до JumpInsn - просто линейный код
+        if (entryInsns.size() > 1) {
+            List<Insn> prefixInsns = entryInsns.subList(0, entryInsns.size() - 1);
+            if (!prefixInsns.isEmpty()) {
+                BlockStmt prefixAst = exprBuilder.buildBlock(prefixInsns);
+                prefixAst.statements().forEach(body::add);
+            }
+        }
+
+        // 2. Условие: строим его так, чтобы THEN соответствовал fallthrough
+        Deque<Expr> stackBefore = exprBuilder.simulateStackBeforeBranch(entryInsns);
+        Expr condExpr = buildIfConditionForFallthrough(j, stackBefore);
+        if (condExpr == null) {
+            return null;
+        }
+
+        // 3. then/else тела
+        BlockStmt thenAst = exprBuilder.buildBlock(thenBlock.instructions());
+        BlockStmt elseAst = exprBuilder.buildBlock(elseBlock.instructions());
+
+        IfStmt ifStmt = new IfStmt(condExpr, thenAst, elseAst);
+        body.add(ifStmt);
+
+        // 4. Хвост: joinBlock (без ветвлений внутрь)
+        if (containsJump(joinBlock)) {
+            // Пока не лезем в ветвящийся хвост
+            return null;
+        }
+        BlockStmt tailAst = exprBuilder.buildBlock(joinBlock.instructions());
+        tailAst.statements().forEach(body::add);
 
         return new MethodAst(name, desc, body);
     }
