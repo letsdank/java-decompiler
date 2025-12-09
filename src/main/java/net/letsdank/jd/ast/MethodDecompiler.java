@@ -134,8 +134,8 @@ public final class MethodDecompiler {
 
         // Оборачиваем в комментарий-предупреждение
         BlockStmt withWarning = new BlockStmt();
-        withWarning.add(new ExprStmt(
-                new StringLiteralExpr("/* WARNING: complex control flow; linearized bytecode only, semantics may be inaccurate */")
+        withWarning.add(new CommentStmt(
+                "/* WARNING: complex control flow; linearized bytecode only, semantics may be inaccurate */"
         ));
         for (Stmt s : linearBody.statements()) {
             withWarning.add(s);
@@ -731,6 +731,14 @@ public final class MethodDecompiler {
         return false;
     }
 
+    private boolean isReturnInsn(Insn insn) {
+        if (!(insn instanceof SimpleInsn s)) return false;
+        return switch (s.opcode()) {
+            case RETURN, IRETURN, LRETURN, FRETURN, DRETURN, ARETURN -> true;
+            default -> false;
+        };
+    }
+
     private Stmt tryCombineIfReturnAndNextReturn(IfStmt ifs, Stmt next) {
         // интересует только if без else
         BlockStmt elseBlock = ifs.elseBlock();
@@ -861,28 +869,54 @@ public final class MethodDecompiler {
             return null;
         }
 
+        int start = e.startPc();
+        int handler = e.handlerPc();
+
         // Очень простой паттерн: один try/catch на весь метод
         // Без вложенных обработчиков. Если в таблице больше записей
         // или странные start/end, лучше не связываться.
-        if (e.startPc() < 0 || e.handlerPc() <= e.startPc()) {
+        if (start < 0 || handler <= start) {
             return null;
         }
 
-        // Разбиваем общий список insns по offset'ам.
+        // Разбиваем общий список insns на 4 части:
+        // до true, сам try, catch, после catch.
         List<Insn> preInsns = new ArrayList<>();
         List<Insn> tryInsns = new ArrayList<>();
         List<Insn> catchInsns = new ArrayList<>();
+        List<Insn> postInsns = new ArrayList<>();
+
+        boolean inCatch = false;
+        boolean inPost = false;
 
         for (Insn insn : insns) {
             int off = insn.offset();
 
-            if (off < e.startPc()) {
-                preInsns.add(insn);
-            } else if (off < e.handlerPc()) {
-                // все между startPc и handlerPc считаем частью try-блока
-                tryInsns.add(insn);
-            } else {
+            if (!inCatch && !inPost) {
+                if (off < start) {
+                    preInsns.add(insn);
+                } else if (off < handler) {
+                    // все от startPc до handlerPc - тело try
+                    tryInsns.add(insn);
+                } else {
+                    // первая инструкция catch-блока
+                    inCatch = true;
+                    catchInsns.add(insn);
+                    if (isReturnInsn(insn)) {
+                        // catch закончен сразу же (одна инструкция-возврат)
+                        inCatch = false;
+                        inPost = true;
+                    }
+                }
+            } else if (inCatch) {
                 catchInsns.add(insn);
+                if (isReturnInsn(insn)) {
+                    inCatch = false;
+                    inPost = true;
+                }
+            } else {
+                // inPost == true
+                postInsns.add(insn);
             }
         }
 
@@ -896,21 +930,13 @@ public final class MethodDecompiler {
         BlockStmt preAst = preInsns.isEmpty() ? new BlockStmt() : builder.buildBlock(preInsns);
         BlockStmt tryAst = builder.buildBlock(tryInsns);
         BlockStmt catchAst = builder.buildBlock(catchInsns);
+        BlockStmt postAst = postInsns.isEmpty() ? new BlockStmt() : builder.buildBlock(postInsns);
 
-        // Попробуем вынести общий эпилог "return ..." из конца catch-блока
-        var catchStmts = catchAst.statements();
-        BlockStmt catchBody;
-        BlockStmt epilogue = new BlockStmt();
+        // Для локальных try/catch не выдираем общий эпилог из catch -
+        // пусть return остается внутри catch.
+        BlockStmt catchBody = catchAst;
 
-        if (!catchStmts.isEmpty() && catchStmts.getLast() instanceof ReturnStmt ret) {
-            // catch-часть без финального return
-            catchBody = new BlockStmt(new ArrayList<>(catchStmts.subList(0, catchStmts.size() - 1)));
-            epilogue.add(ret);
-        } else {
-            catchBody = catchAst;
-        }
-
-        // Восстанавливаем тип исключение из constant pool
+        // Тип исключения берем constant pool
         String exceptionInternalName = cp.getClassName(e.catchTypeIndex());
         String exceptionType = exceptionInternalName.replace('/', '.');
 
@@ -928,7 +954,7 @@ public final class MethodDecompiler {
         body.add(new TryCatchStmt(tryAst, exceptionType, exceptionVarName, catchBody));
 
         // Эпилог (общий return/null и прочее после try/catch)
-        for (Stmt s : epilogue.statements()) {
+        for (Stmt s : postAst.statements()) {
             body.add(s);
         }
 
@@ -1237,18 +1263,32 @@ public final class MethodDecompiler {
             return new BlockStmt();
         }
 
-        // Проверим, есть ли вообще прыжки
-        boolean hasCf = hasControlFlow(bodyInsns);
+        // Анализируем прыжки внутри тела
+        int jumpCount = 0;
+        boolean onlyFinalGoto = false;
+        int lastIndex = bodyInsns.size() - 1;
 
-        // Если нет прыжков - можно честно линейно интерпретировать
-        if (!hasCf) {
-            ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options, null);
+        for (int i = 0; i < bodyInsns.size(); i++) {
+            Insn in = bodyInsns.get(i);
+            if (in instanceof JumpInsn j) {
+                jumpCount++;
+                if (i == lastIndex && j.opcode() == Opcode.GOTO) {
+                    onlyFinalGoto = true;
+                }
+            }
+        }
+
+        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options, null);
+
+        // 1. Нет прыжков вообще -> честный линейный код
+        // 2. Ровно один прыжок и это GOTO в конце -> тоже честный линейный код:
+        //    ExpressionBuilder все равно проигнорирует сам GOTO.
+        if (jumpCount == 0 || (jumpCount == 1 && onlyFinalGoto)) {
             return safeBuildBlock(exprBuilder, bodyInsns);
         }
 
         // Есть какой-то control flow - строим под-CFG
         ControlFlowGraph subCfg = cfgBuilder.buildFromInsns(bodyInsns);
-        ExpressionBuilder exprBuilder = new ExpressionBuilder(localNames, cp, options, null);
 
         List<BasicBlock> blocks = subCfg.blocks();
         if (blocks.isEmpty()) {
@@ -1526,6 +1566,17 @@ public final class MethodDecompiler {
         if (stmts.isEmpty()) return null;
         if (stmts.getLast() instanceof ReturnStmt rs) return rs;
         return null;
+    }
+
+    private boolean isCatchEnd(Insn insn) {
+        if (insn instanceof SimpleInsn s) {
+            return switch (s.opcode()) {
+                case RETURN,IRETURN,LRETURN,FRETURN,DRETURN,ARETURN,ATHROW->true;
+                default->false;
+            };
+        }
+        // Можно расширить: GOTO, выходящий за try/catch-область, но пока этого достаточно
+        return false;
     }
 
     /*

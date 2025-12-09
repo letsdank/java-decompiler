@@ -117,6 +117,8 @@ public final class JavaPrettyPrinter {
             printExprStmt(es);
         } else if (stmt instanceof TryCatchStmt tcs) {
             printTryCatchStmt(tcs);
+        } else if (stmt instanceof CommentStmt cs) {
+            appendLine(cs.text());
         } else {
             // временный fallback, чтобы видеть неожиданные типы
             appendLine("// TODO: " + stmt.getClass().getSimpleName() + " -> " + stmt);
