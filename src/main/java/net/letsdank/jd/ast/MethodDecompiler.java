@@ -4,9 +4,7 @@ import net.letsdank.jd.ast.expr.*;
 import net.letsdank.jd.ast.stmt.*;
 import net.letsdank.jd.bytecode.BytecodeDecoder;
 import net.letsdank.jd.bytecode.Opcode;
-import net.letsdank.jd.bytecode.insn.Insn;
-import net.letsdank.jd.bytecode.insn.JumpInsn;
-import net.letsdank.jd.bytecode.insn.SimpleInsn;
+import net.letsdank.jd.bytecode.insn.*;
 import net.letsdank.jd.cfg.BasicBlock;
 import net.letsdank.jd.cfg.CfgBuilder;
 import net.letsdank.jd.cfg.ControlFlowGraph;
@@ -73,7 +71,13 @@ public final class MethodDecompiler {
         // 2. Строим CFG
         ControlFlowGraph cfg = cfgBuilder.build(code);
 
-        // 2.1. Попытка рекурсивной структуризации для ацикличных графов:
+        // 2.1. Попытка распознать простой switch
+        MethodAst switchAst = tryBuildSwitch(cfg, localNames, cp, options, bootstrap, name, desc);
+        if (switchAst != null) {
+            return postProcessLoops(switchAst);
+        }
+
+        // 2.2. Попытка рекурсивной структуризации для ацикличных графов:
         //      if/if-else/последовательности без циклов.
         if (!hasBackEdge(cfg)) {
             MethodAst structured = tryStructurizeAcyclicCfg(cfg, localNames, cp, options, bootstrap, name, desc);
@@ -284,6 +288,147 @@ public final class MethodDecompiler {
             return new IfStmt(condition, thenBlock, elseBlock);
         }
 
+        return null;
+    }
+
+    private MethodAst tryBuildSwitch(ControlFlowGraph cfg, LocalNameProvider localNames, ConstantPool cp,
+                                     DecompilerOptions options, BootstrapMethodsAttribute bootstrap,
+                                     String name, String desc) {
+        ExpressionBuilder builder = new ExpressionBuilder(localNames, cp, options, bootstrap);
+
+        for (BasicBlock bb : cfg.blocks()) {
+            List<Insn> insns = bb.instructions();
+            if (insns.isEmpty()) continue;
+
+            Insn last = insns.getLast();
+            TableSwitchInsn ts = null;
+            LookupSwitchInsn ls = null;
+
+            if (last instanceof TableSwitchInsn t) {
+                ts = t;
+            } else if (last instanceof LookupSwitchInsn l) {
+                ls = l;
+            } else {
+                continue;
+            }
+
+            Expr selector = selectorExprBeforeSwitch(insns, localNames);
+            if (selector == null) {
+                continue;
+            }
+
+            Map<Integer, Integer> valueToTarget = new LinkedHashMap<>();
+            if (ts != null) {
+                valueToTarget.putAll(ts.caseTargets());
+            } else {
+                valueToTarget.putAll(ls.matchTargets());
+            }
+
+            int defaultTarget = ts != null ? ts.defaultTarget() : ls.defaultTarget();
+
+            // Собираем все уникальные целевые блоки (cases + default)
+            Set<Integer> targetOffsets = new LinkedHashSet<>(valueToTarget.values());
+
+            // Определяем join (если все case-блоки прыгают на один и тот же GOTO в конце)
+            Integer joinTarget = findCommonGotoTarget(cfg, targetOffsets);
+
+            // Строим блоки для каждой цели, переиспользуя, если несколько case указывают на один блок
+            Map<Integer, BlockStmt> blockByOffset = new HashMap<>();
+            for (Integer off : targetOffsets) {
+                BlockStmt stmtBlock = buildCaseBlock(cfg, off, builder, joinTarget);
+                if (stmtBlock == null) {
+                    blockByOffset = null;
+                    break;
+                }
+                blockByOffset.put(off, stmtBlock);
+            }
+
+            if (blockByOffset == null) {
+                continue;
+            }
+
+            Map<Integer, BlockStmt> cases = new LinkedHashMap<>();
+            for (Map.Entry<Integer, Integer> e : valueToTarget.entrySet()) {
+                BlockStmt blk = blockByOffset.get(e.getValue());
+                if (blk == null) {
+                    cases = null;
+                    break;
+                }
+                cases.put(e.getKey(), blk);
+            }
+
+            if (cases == null) {
+                continue;
+            }
+
+            BlockStmt defaultBlock = blockByOffset.get(defaultTarget);
+
+            BlockStmt methodBody = new BlockStmt();
+            methodBody.add(new SwitchStmt(selector, cases, defaultBlock));
+            return new MethodAst(name, desc, methodBody);
+        }
+
+        return null;
+    }
+
+    private BlockStmt buildCaseBlock(ControlFlowGraph cfg, int offset, ExpressionBuilder builder, Integer joinTarget) {
+        BasicBlock bb = cfg.blockByStartOffset(offset);
+        if (bb == null) return null;
+
+        List<Insn> insns = new ArrayList<>(bb.instructions());
+        if (insns.isEmpty()) {
+            return new BlockStmt();
+        }
+
+        Insn last = insns.getLast();
+        if (last instanceof JumpInsn j) {
+            if (j.opcode() == Opcode.GOTO && joinTarget != null && j.targetOffset() == joinTarget) {
+                insns.removeLast(); // простой break к общему join
+            } else {
+                return null; // fallthrough или сложный переход пока не поддерживаем
+            }
+        }
+
+        try {
+            return builder.buildBlock(insns);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private Integer findCommonGotoTarget(ControlFlowGraph cfg, Set<Integer> targetOffsets) {
+        Integer common = null;
+        for (Integer off : targetOffsets) {
+            BasicBlock bb = cfg.blockByStartOffset(off);
+            if (bb == null || bb.instructions().isEmpty()) continue;
+            Insn last = bb.instructions().getLast();
+            if (last instanceof JumpInsn j && j.opcode() == Opcode.GOTO) {
+                if (common == null) {
+                    common = j.targetOffset();
+                } else if (!common.equals(j.targetOffset())) {
+                    return null;
+                }
+            }
+        }
+        return common;
+    }
+
+    private Expr selectorExprBeforeSwitch(List<Insn> insns, LocalNameProvider locals) {
+        if (insns.size() < 2) return null;
+        Insn prev = insns.get(insns.size() - 2);
+
+        if (prev instanceof LocalVarInsn lv) {
+            return new VarExpr(locals.nameForLocal(lv.localIndex()));
+        }
+        if (prev instanceof SimpleInsn s) {
+            return switch (s.opcode()) {
+                case ILOAD_0 -> new VarExpr(locals.nameForLocal(0));
+                case ILOAD_1 -> new VarExpr(locals.nameForLocal(1));
+                case ILOAD_2 -> new VarExpr(locals.nameForLocal(2));
+                case ILOAD_3 -> new VarExpr(locals.nameForLocal(3));
+                default -> null;
+            };
+        }
         return null;
     }
 
@@ -1506,25 +1651,9 @@ public final class MethodDecompiler {
         BlockStmt originalBody = loop.body();
         BlockStmt normalizedBody = transformBlock(originalBody, returnsBoolean);
 
-        var stmts = normalizedBody.statements();
-        if (!stmts.isEmpty()) {
-            Stmt last = stmts.getLast();
-            AssignStmt update = extractSimpleUpdate(last);
-            if (update != null) {
-                // Нашли паттерн "i = i + N" в конце тела цикла -> можно собрать for
-                var bodyWithoutUpdate = new ArrayList<Stmt>(stmts.size() - 1);
-                bodyWithoutUpdate.addAll(stmts.subList(0, stmts.size() - 1));
-                BlockStmt forBody = new BlockStmt(bodyWithoutUpdate);
-
-                // Пока init не выделяем, используем только condition и update.
-                return new ForStmt(null, loop.condition(), update, forBody);
-            }
-        }
-
-        // Если тело не изменилось и паттерн for не нашли, просто возвращаем исходный цикл
+        // Возвращаем цикл как while; не преобразуем в for, чтобы печать оставалась в формате while.
         if (normalizedBody.equals(originalBody)) return loop;
 
-        // Иначе хотя бы обновим тело while на нормализованную версию
         return new LoopStmt(loop.condition(), normalizedBody);
     }
 
@@ -1571,8 +1700,8 @@ public final class MethodDecompiler {
     private boolean isCatchEnd(Insn insn) {
         if (insn instanceof SimpleInsn s) {
             return switch (s.opcode()) {
-                case RETURN,IRETURN,LRETURN,FRETURN,DRETURN,ARETURN,ATHROW->true;
-                default->false;
+                case RETURN, IRETURN, LRETURN, FRETURN, DRETURN, ARETURN, ATHROW -> true;
+                default -> false;
             };
         }
         // Можно расширить: GOTO, выходящий за try/catch-область, но пока этого достаточно
