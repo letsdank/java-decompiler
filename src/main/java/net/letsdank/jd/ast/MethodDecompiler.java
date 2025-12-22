@@ -1676,7 +1676,8 @@ public final class MethodDecompiler {
     private boolean hasControlFlow(List<Insn> insns) {
         for (Insn i : insns) {
             if (i instanceof JumpInsn) return true;
-            // сюда же можно будет добавить TABLESWITCH/LOOKUPSWITCH, если они не как JumpInsn
+            if (i instanceof TableSwitchInsn) return true;
+            if (i instanceof LookupSwitchInsn) return true;
         }
         return false;
     }
