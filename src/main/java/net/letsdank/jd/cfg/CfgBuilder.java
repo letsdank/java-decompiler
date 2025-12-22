@@ -132,7 +132,13 @@ public final class CfgBuilder {
 
     private static boolean isReturn(Insn insn) {
         if (insn instanceof SimpleInsn s) {
-            return s.opcode() == Opcode.RETURN || s.opcode() == Opcode.IRETURN;
+            return s.opcode() == Opcode.RETURN
+                    || s.opcode() == Opcode.IRETURN
+                    || s.opcode() == Opcode.LRETURN
+                    || s.opcode() == Opcode.FRETURN
+                    || s.opcode() == Opcode.DRETURN
+                    || s.opcode() == Opcode.ARETURN
+                    || s.opcode() == Opcode.ATHROW;
         }
         return false;
     }

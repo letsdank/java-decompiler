@@ -211,7 +211,7 @@ public enum Opcode {
     LAND(0x7F, "land"),
 
     IOR(0x80, "ior"),
-    LOR(0x71, "lor"),
+    LOR(0x81, "lor"),
 
     IXOR(0x82, "ixor"),
     LXOR(0x83, "lxor"),
@@ -260,7 +260,7 @@ public enum Opcode {
     IFLE(0x9E, "ifle", OperandType.BRANCH_S2),
 
     IF_ICMPEQ(0x9F, "if_icmpeq", OperandType.BRANCH_S2),
-    IF_ICMPNE(0xA0, "ic_icmpne", OperandType.BRANCH_S2),
+    IF_ICMPNE(0xA0, "if_icmpne", OperandType.BRANCH_S2),
     IF_ICMPLT(0xA1, "if_icmplt", OperandType.BRANCH_S2),
     IF_ICMPGE(0xA2, "if_icmpge", OperandType.BRANCH_S2),
     IF_ICMPGT(0xA3, "if_icmpgt", OperandType.BRANCH_S2),

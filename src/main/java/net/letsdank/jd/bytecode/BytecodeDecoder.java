@@ -90,9 +90,9 @@ public final class BytecodeDecoder {
                         return insns;
                     }
                     int b1 = code[offset] & 0xFF;
-                    int b2 = code[offset] & 0xFF;
-                    int b3 = code[offset] & 0xFF;
-                    int b4 = code[offset] & 0xFF;
+                    int b2 = code[offset + 1] & 0xFF;
+                    int b3 = code[offset + 2] & 0xFF;
+                    int b4 = code[offset + 3] & 0xFF;
                     offset += 4;
                     int delta = (b1 << 24) | (b2 << 16) | (b3 << 8) | b4; // signed int
                     int target = start + delta;
