@@ -2,9 +2,7 @@ package net.letsdank.jd.bytecode;
 
 import net.letsdank.jd.bytecode.insn.*;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 
 /**
  * Примитивный декодер байткода.
@@ -166,11 +164,17 @@ public final class BytecodeDecoder {
                         return insns;
                     }
 
-                    // пропускаем все таргеты
-                    offset += (int) (count * 4);
+                    // читаем таргеты и формируем абсолютные адреса
+                    Map<Integer, Integer> targets = new LinkedHashMap<>();
+                    for (int v = low; v <= high; v++) {
+                        int delta = readInt(code, offset);
+                        offset += 4;
+                        int target = start + delta;
+                        targets.put(v, target);
+                    }
 
-                    // Пока не сохраняем подробности - просто фиксируем, что здесь есть tableswitch
-                    insns.add(new SimpleInsn(start, opcode));
+                    int defaultTarget = start + def;
+                    insns.add(new TableSwitchInsn(start, defaultTarget, low, high, targets));
                 }
                 case LOOKUPSWITCH -> {
                     // формат:

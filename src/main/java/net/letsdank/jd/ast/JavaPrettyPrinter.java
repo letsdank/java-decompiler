@@ -109,6 +109,8 @@ public final class JavaPrettyPrinter {
             printLoop(loop);
         } else if (stmt instanceof ForStmt forStmt) {
             printFor(forStmt);
+        } else if (stmt instanceof SwitchStmt sw) {
+            printSwitch(sw);
         } else if (stmt instanceof AssignStmt as) {
             printAssign(as);
         } else if (stmt instanceof ReturnStmt rs) {
@@ -156,6 +158,31 @@ public final class JavaPrettyPrinter {
         indent++;
         for (Stmt s : fs.body().statements()) {
             printStmt(s);
+        }
+        indent--;
+        appendLine("}");
+    }
+
+    private void printSwitch(SwitchStmt sw) {
+        appendLine("switch (" + sw.selector() + ") {");
+        indent++;
+        for (var entry : sw.cases().entrySet()) {
+            appendLine("case " + entry.getKey() + ":");
+            indent++;
+            for (Stmt s : entry.getValue().statements()) {
+                printStmt(s);
+            }
+            appendLine("break;");
+            indent--;
+        }
+        if (sw.defaultBlock() != null && !sw.defaultBlock().statements().isEmpty()) {
+            appendLine("default:");
+            indent++;
+            for (Stmt s : sw.defaultBlock().statements()) {
+                printStmt(s);
+            }
+            appendLine("break;");
+            indent--;
         }
         indent--;
         appendLine("}");

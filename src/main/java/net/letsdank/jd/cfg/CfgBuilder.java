@@ -2,9 +2,7 @@ package net.letsdank.jd.cfg;
 
 import net.letsdank.jd.bytecode.BytecodeDecoder;
 import net.letsdank.jd.bytecode.Opcode;
-import net.letsdank.jd.bytecode.insn.Insn;
-import net.letsdank.jd.bytecode.insn.JumpInsn;
-import net.letsdank.jd.bytecode.insn.SimpleInsn;
+import net.letsdank.jd.bytecode.insn.*;
 
 import java.util.*;
 
@@ -35,6 +33,12 @@ public final class CfgBuilder {
                 if (i + 1 < insns.size()) {
                     leaders.add(insns.get(i + 1).offset());
                 }
+            } else if (insn instanceof TableSwitchInsn ts) {
+                leaders.add(ts.defaultTarget());
+                leaders.addAll(ts.caseTargets().values());
+            } else if (insn instanceof LookupSwitchInsn ls) {
+                leaders.add(ls.defaultTarget());
+                leaders.addAll(ls.matchTargets().values());
             }
         }
 
@@ -84,6 +88,21 @@ public final class CfgBuilder {
                     if (fallthrough != null) {
                         bb.addSuccessor(fallthrough);
                     }
+                }
+            } else if (last instanceof TableSwitchInsn ts) {
+                // switch: все таргеты + default
+                BasicBlock def = byStart.get(ts.defaultTarget());
+                if (def != null) bb.addSuccessor(def);
+                for (Integer t : ts.caseTargets().values()) {
+                    BasicBlock b = byStart.get(t);
+                    if (b != null) bb.addSuccessor(b);
+                }
+            } else if (last instanceof LookupSwitchInsn ls) {
+                BasicBlock def = byStart.get(ls.defaultTarget());
+                if (def != null) bb.addSuccessor(def);
+                for (Integer t : ls.matchTargets().values()) {
+                    BasicBlock b = byStart.get(t);
+                    if (b != null) bb.addSuccessor(b);
                 }
             } else if (isReturn(last)) {
                 // return - нет successors
