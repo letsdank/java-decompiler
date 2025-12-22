@@ -216,12 +216,59 @@ public final class BytecodeDecoder {
                     insns.add(new ConstantPoolInsn(start, opcode, cpIndex));
                 }
                 case WIDE -> {
-                    // wide меняет формат следующей инструкции.
-                    // Корректная поддержка потребует спец-логики.
-                    // Пока честно зафиксируем, что дальше мы не умеем, и завершим декодирование.
-                    byte[] remaining = Arrays.copyOfRange(code, start, code.length);
-                    insns.add(new UnknownInsn(start, opByte, remaining));
-                    return insns;
+                    // Корректная поддержка: читаем следующий опкод и его расширенные операнды.
+                    if (offset >= code.length) {
+                        insns.add(new UnknownInsn(start, opByte, Arrays.copyOfRange(code,start,code.length)));
+                        return insns;
+                    }
+
+                    int widenedOp = code[offset]&0xFF;
+                    offset++; // продвинулись за реальный опкод
+                    Opcode widened = Opcode.fromCode(widenedOp);
+                    if(widened==null){
+                        insns.add(new UnknownInsn(start,opByte,Arrays.copyOfRange(code,start,code.length)));
+                        return insns;
+                    }
+
+                    // Поддерживаем ILOAD/LLOAD/FLOAD/DLOAD/ALOAD, ISTORE/LSTORE/FSTORE/DSTORE/ASTORE, IINC, RET
+                    switch(widened) {
+                        case ILOAD,LLOAD,FLOAD,DLOAD,ALOAD,
+                             ISTORE,LSTORE,FSTORE,DSTORE,ASTORE,
+                             RET->{
+                            if(offset+1>=code.length){
+                                insns.add(new UnknownInsn(start,opByte,Arrays.copyOfRange(code,start,code.length)));
+                                return insns;
+                            }
+                            int hi=code[offset]&0xFF;
+                            int lo=code[offset+1]&0xFF;
+                            offset+=2;
+                            int idx=(hi<<8)|lo;
+                            insns.add(new LocalVarInsn(start,widened,idx));
+                        }
+                        case IINC->{
+                            // wide iinc: index:u2, const:s2
+                            if(offset+3>=code.length) {
+                                insns.add(new UnknownInsn(start,opByte, Arrays.copyOfRange(code, start, code.length)));
+                                return insns;
+                            }
+
+                            int hi = code[offset]&0xFF;
+                            int lo=code[offset+1]&0xFF;
+                            int idx = (hi<<8)|lo;
+
+                            int dhi=code[offset+2]&0xFF;
+                            int dlo=code[offset+3]&0xFF;
+                            int delta=(short)((dhi<<8)|dlo);
+
+                            offset+=4;
+                            insns.add(new IincInsn(start,widened,idx,delta));
+                        }
+                        default->{
+                            // Неизвестный/неподдерживаемый опкод под wide
+                            insns.add(new UnknownInsn(start,opByte,Arrays.copyOfRange(code,start,code.length)));
+                            return insns;
+                        }
+                    }
                 }
             }
         }
