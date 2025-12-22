@@ -295,6 +295,28 @@ public final class ClassFileReader {
                 exceptionIndexTable[i] = in.readU2();
             }
             return new ExceptionsAttribute(name, exceptionIndexTable);
+        } else if ("InnerClasses".equals(name)) {
+            int numberOfClasses = in.readU2();
+            List<InnerClassesAttribute.Entry> entries = new ArrayList<>(numberOfClasses);
+            for (int i = 0; i < numberOfClasses; i++) {
+                int innerClassInfoIndex = in.readU2();
+                int outerClassInfoIndex = in.readU2();
+                int innerNameIndex = in.readU2();
+                int innerAccess = in.readU2();
+                entries.add(new InnerClassesAttribute.Entry(innerClassInfoIndex, outerClassInfoIndex, innerNameIndex, innerAccess));
+            }
+            return new InnerClassesAttribute(name, entries);
+        } else if ("EnclosingMethod".equals(name)) {
+            int classIndex = in.readU2();
+            int methodIndex = in.readU2();
+            return new EnclosingMethodAttribute(name, classIndex, methodIndex);
+        } else if ("SourceFile".equals(name)) {
+            if (length != 2) {
+                for (long k = 0; k < length; k++) in.readU1();
+                return new RawAttribute(name, new byte[0]);
+            }
+            int sourceIndex = in.readU2();
+            return new SourceFileAttribute(name, sourceIndex);
         } else if ("BootstrapMethods".equals(name)) {
             byte[] data = new byte[(int) length];
             for (int i = 0; i < length; i++) {
