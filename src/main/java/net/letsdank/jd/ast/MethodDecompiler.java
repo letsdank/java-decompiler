@@ -14,6 +14,9 @@ import net.letsdank.jd.model.MethodInfo;
 import net.letsdank.jd.model.attribute.AttributeInfo;
 import net.letsdank.jd.model.attribute.BootstrapMethodsAttribute;
 import net.letsdank.jd.model.attribute.CodeAttribute;
+import net.letsdank.jd.model.cp.CpInfo;
+import net.letsdank.jd.model.cp.CpInterfaceMethodref;
+import net.letsdank.jd.model.cp.CpNameAndType;
 import net.letsdank.jd.utils.JDUtils;
 
 import java.util.*;
@@ -83,7 +86,13 @@ public final class MethodDecompiler {
             return postProcessLoops(switchAst);
         }
 
-        // 2.3. Попытка рекурсивной структуризации для ацикличных графов:
+        // 2.3. Попытка распознать for-each цикл
+        MethodAst forEachAst = tryBuildForEach(cfg, localNames, cp, options, bootstrap, name, desc);
+        if (forEachAst != null) {
+            return postProcessLoops(forEachAst);
+        }
+
+        // 2.4. Попытка рекурсивной структуризации для ацикличных графов:
         //      if/if-else/последовательности без циклов.
         if (!hasBackEdge(cfg)) {
             MethodAst structured = tryStructurizeAcyclicCfg(cfg, localNames, cp, options, bootstrap, name, desc);
@@ -239,6 +248,16 @@ public final class MethodDecompiler {
                 return new BinaryExpr("!=", left, right);
             }
 
+            // --- null проверки ---
+            case IFNULL -> {
+                Expr x = stack.pop();
+                return new BinaryExpr("==", x, new NullExpr());
+            }
+            case IFNONNULL -> {
+                Expr x = stack.pop();
+                return new BinaryExpr("!=", x, new NullExpr());
+            }
+
             default -> {
                 return null;
             }
@@ -370,6 +389,106 @@ public final class MethodDecompiler {
             case ALOAD_3, ILOAD_3, LLOAD_3, FLOAD_3, DLOAD_3 -> 3;
             default -> null;
         };
+    }
+
+    /**
+     * Попытка распознать для-каждый цикл (for-each / enhanced for).
+     * Паттерн: iterator() -> hasNext() в условии -> next() в теле.
+     */
+    private MethodAst tryBuildForEach(ControlFlowGraph cfg, LocalNameProvider localNames, ConstantPool cp,
+                                      DecompilerOptions options, BootstrapMethodsAttribute bootstrap,
+                                      String name, String desc) {
+        // For-each цикл имеет следующую структуру:
+        // - инициализация: вызов iterator() на iterable, сохранение в локальную переменную
+        // - условие: вызов hasNext() на iterator
+        // - тело: вызов next(), сохранение в переменную итерации, пользовательский код
+        // - условие замыкается обратно на начало цикла
+
+        // Проверяем: есть ли цикл с вызовом hasNext() в условии?
+        for (BasicBlock condBlock : cfg.blocks()) {
+            var insns = condBlock.instructions();
+            if (insns.isEmpty()) continue;
+
+            // Ищем pattern: aload iterator; invokeinterface hasNext()
+            int hasNextIdx = -1;
+            int iteratorLoadIdx = -1;
+
+            for (int i = 0; i < insns.size() - 1; i++) {
+                Insn curr = insns.get(i);
+                Insn next = insns.get(i + 1);
+
+                // Ищем load local и invokeinterface hasNext()
+                if (curr instanceof LocalVarInsn lv && lv.opcode() == Opcode.ALOAD) {
+                    if (next instanceof ConstantPoolInsn cpi && cpi.opcode() == Opcode.INVOKEINTERFACE) {
+                        // Проверяем, что это hasNext() метод
+                        try {
+                            CpInfo info = cp.entry(cpi.cpIndex());
+                            if (info instanceof CpInterfaceMethodref imr) {
+                                CpNameAndType nt = (CpNameAndType) cp.entry(imr.nameAndTypeIndex());
+                                String methodName = cp.getUtf8(nt.nameIndex());
+                                if ("hasNext".equals(methodName)) {
+                                    iteratorLoadIdx = i;
+                                    hasNextIdx = i + 1;
+                                    break;
+                                }
+                            }
+                        } catch (Exception e) {
+                            // игнорируем ошибки
+                        }
+                    }
+                }
+            }
+
+            if (hasNextIdx < 0 || iteratorLoadIdx < 0) continue;
+
+            // Теперь смотрим в тело цикла - ищем вызов next()
+            if (condBlock.successors().size() != 2) continue;
+
+            BasicBlock bodyEntry = condBlock.successors().get(0);   // fallthrough идет в тело
+            BasicBlock exitblock = condBlock.successors().get(1);   // jump идет на выход
+
+            // Проверяем, что в теле есть вызов next() и присваивание
+            boolean hasNext = false;
+            int iterationVarIdx = -1;
+
+            for (BasicBlock bodyBlock : bodyEntry.successors()) {
+                List<Insn> bodyInsn = bodyBlock.instructions();
+                for (int i = 0; i < bodyInsn.size() - 2; i++) {
+                    Insn i0 = bodyInsn.get(i);
+                    Insn i1 = bodyInsn.get(i + 1);
+                    Insn i2 = bodyInsn.get(i + 2);
+
+                    // Ищем: aload iterator; invokeinterface next(); astore var
+                    if (i0 instanceof LocalVarInsn lv0 && lv0.opcode() == Opcode.ALOAD &&
+                            i1 instanceof ConstantPoolInsn cpi && cpi.opcode() == Opcode.INVOKEINTERFACE &&
+                            i2 instanceof LocalVarInsn lv2 && lv2.opcode() == Opcode.ASTORE) {
+                        try {
+                            CpInfo info = cp.entry(cpi.cpIndex());
+                            if (info instanceof CpInterfaceMethodref imr) {
+                                CpNameAndType nt = (CpNameAndType) cp.entry(imr.nameAndTypeIndex());
+                                String methodName = cp.getUtf8(nt.nameIndex());
+                                if ("next".equals(methodName)) {
+                                    hasNext = true;
+                                    iterationVarIdx = lv2.localIndex();
+                                    break;
+                                }
+                            }
+                        } catch (Exception e) {
+                            // игнорируем ошибки
+                        }
+                    }
+                }
+                if (hasNext) break;
+            }
+
+            if (!hasNext || iterationVarIdx < 0) continue;
+
+            // Пока не реализуем полную логику распознавания для-каждого
+            // Возвращаем null чтобы упасть на while loop распознавание
+            return null;
+        }
+
+        return null;
     }
 
     private MethodAst tryBuildSwitch(ControlFlowGraph cfg, LocalNameProvider localNames, ConstantPool cp,

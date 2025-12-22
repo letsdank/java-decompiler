@@ -7,5 +7,5 @@ public sealed interface Expr
         permits IntConstExpr, VarExpr, BinaryExpr, UnaryExpr,
         CallExpr, FieldAccessExpr, StringLiteralExpr,
         CastExpr, InstanceOfExpr, NewExpr, UninitializedNewExpr,
-        ArrayAccessExpr, NewArrayExpr, ArrayLengthExpr, TernaryExpr {
+        ArrayAccessExpr, NewArrayExpr, ArrayLengthExpr, TernaryExpr, NullExpr {
 }

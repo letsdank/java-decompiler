@@ -52,33 +52,33 @@ public final class ExpressionBuilder {
         for (Insn insn : insns) {
             if (insn instanceof SimpleInsn s) {
                 switch (s.opcode()) {
-                    // арифметика
-                    case IADD -> {
+                    // арифметика (int, long, float, double)
+                    case IADD, LADD, FADD, DADD -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
                         stack.push(new BinaryExpr("+", left, right));
                     }
-                    case ISUB -> {
+                    case ISUB, LSUB, FSUB, DSUB -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
                         stack.push(new BinaryExpr("-", left, right));
                     }
-                    case IMUL -> {
+                    case IMUL, LMUL, FMUL, DMUL -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
                         stack.push(new BinaryExpr("*", left, right));
                     }
-                    case IDIV -> {
+                    case IDIV, LDIV, FDIV, DDIV -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
                         stack.push(new BinaryExpr("/", left, right));
                     }
-                    case IREM -> {
+                    case IREM, LREM, FREM, DREM -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
                         stack.push(new BinaryExpr("%", left, right));
                     }
-                    case INEG -> {
+                    case INEG, LNEG, FNEG, DNEG -> {
                         Expr value = stack.pop();
                         stack.push(new UnaryExpr("-", value));
                     }
@@ -115,6 +115,26 @@ public final class ExpressionBuilder {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
                         stack.push(new BinaryExpr(">>>", left, right));
+                    }
+
+                    // преобразования типов
+                    case I2L, I2F, I2D, L2I, L2F, L2D, F2I, F2L, F2D, D2I, D2L, D2F -> {
+                        Expr value = stack.pop();
+                        // Пока просто оставляем как есть, т.к. в Java часто неявное преобразование
+                        stack.push(value);
+                    }
+                    case I2B,I2C,I2S -> {
+                        // Преобразования в меньшие типы
+                        Expr value = stack.pop();
+                        stack.push(value);
+                    }
+
+                    // сравнения данных, float, double (результат: -1, 0 или 1)
+                    case LCMP,FCMPL,FCMPG,DCMPL,DCMPG -> {
+                        Expr right = stack.pop();
+                        Expr left = stack.pop();
+                        // Представим как обычное сравнение (хотя технически это не совсем правильно)
+                        stack.push(new BinaryExpr("-", left,right));
                     }
 
                     // возвраты
@@ -365,6 +385,17 @@ public final class ExpressionBuilder {
                         } else if (entry instanceof CpInteger i) {
                             int value = i.value();
                             stack.push(new IntConstExpr(value));
+                        }
+                    }
+                    case LDC2_W -> {
+                        // ldc2_w #idx -> long или double константа
+                        CpInfo entry = cp.entry(cpi.cpIndex());
+                        if(entry instanceof CpLong l) {
+                            // Представим как строку для упрощения (long literals вроде 123L)
+                            stack.push(new StringLiteralExpr(String.valueOf(l.value())));
+                        } else if (entry instanceof CpDouble d) {
+                            // Double literals
+                            stack.push(new StringLiteralExpr(String.valueOf(d.value())));
                         }
                     }
                     case GETSTATIC -> {
