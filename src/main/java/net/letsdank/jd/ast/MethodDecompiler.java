@@ -16,6 +16,7 @@ import net.letsdank.jd.model.attribute.BootstrapMethodsAttribute;
 import net.letsdank.jd.model.attribute.CodeAttribute;
 import net.letsdank.jd.model.cp.CpInfo;
 import net.letsdank.jd.model.cp.CpInterfaceMethodref;
+import net.letsdank.jd.model.cp.CpMethodref;
 import net.letsdank.jd.model.cp.CpNameAndType;
 import net.letsdank.jd.utils.JDUtils;
 
@@ -398,96 +399,155 @@ public final class MethodDecompiler {
     private MethodAst tryBuildForEach(ControlFlowGraph cfg, LocalNameProvider localNames, ConstantPool cp,
                                       DecompilerOptions options, BootstrapMethodsAttribute bootstrap,
                                       String name, String desc) {
-        // For-each цикл имеет следующую структуру:
-        // - инициализация: вызов iterator() на iterable, сохранение в локальную переменную
-        // - условие: вызов hasNext() на iterator
-        // - тело: вызов next(), сохранение в переменную итерации, пользовательский код
-        // - условие замыкается обратно на начало цикла
+        // Шаблон для-каждого (итераторный):
+        //      init: <iterable>.iterator() -> astore iterVar
+        //      cond: aload iterVar; invokeinterface hasNext(); ifeq exit
+        //      body: aload iterVar; invokeinterface next(); [checkcast T]; astore loopVar
+        //            ... body ...
+        //            goto cond
 
-        // Проверяем: есть ли цикл с вызовом hasNext() в условии?
+        ExpressionBuilder builder = new ExpressionBuilder(localNames, cp, options, bootstrap);
+
         for (BasicBlock condBlock : cfg.blocks()) {
-            var insns = condBlock.instructions();
-            if (insns.isEmpty()) continue;
+            List<Insn> condInsns = condBlock.instructions();
+            if (condInsns.size() < 3) continue;
 
-            // Ищем pattern: aload iterator; invokeinterface hasNext()
-            int hasNextIdx = -1;
-            int iteratorLoadIdx = -1;
-
-            for (int i = 0; i < insns.size() - 1; i++) {
-                Insn curr = insns.get(i);
-                Insn next = insns.get(i + 1);
-
-                // Ищем load local и invokeinterface hasNext()
-                if (curr instanceof LocalVarInsn lv && lv.opcode() == Opcode.ALOAD) {
-                    if (next instanceof ConstantPoolInsn cpi && cpi.opcode() == Opcode.INVOKEINTERFACE) {
-                        // Проверяем, что это hasNext() метод
-                        try {
-                            CpInfo info = cp.entry(cpi.cpIndex());
-                            if (info instanceof CpInterfaceMethodref imr) {
-                                CpNameAndType nt = (CpNameAndType) cp.entry(imr.nameAndTypeIndex());
-                                String methodName = cp.getUtf8(nt.nameIndex());
-                                if ("hasNext".equals(methodName)) {
-                                    iteratorLoadIdx = i;
-                                    hasNextIdx = i + 1;
-                                    break;
-                                }
-                            }
-                        } catch (Exception e) {
-                            // игнорируем ошибки
-                        }
-                    }
-                }
+            Insn last = condInsns.getLast();
+            if (!(last instanceof JumpInsn j) || !JDUtils.isConditional(j.opcode())) {
+                continue;
             }
 
-            if (hasNextIdx < 0 || iteratorLoadIdx < 0) continue;
+            // Ожидаем хвост cond: aload iter; invokeinterface hasNext(); ifeq/ifne exit
+            Insn beforeLast = condInsns.get(condInsns.size() - 2);
+            Insn beforeBeforeLast = condInsns.get(condInsns.size() - 3);
+            if (!(beforeBeforeLast instanceof LocalVarInsn lvLoad && lvLoad.opcode() == Opcode.ALOAD)) {
+                continue;
+            }
+            if (!(beforeLast instanceof ConstantPoolInsn hasNextCpi &&
+                    (hasNextCpi.opcode() == Opcode.INVOKEINTERFACE || hasNextCpi.opcode() == Opcode.INVOKEVIRTUAL))) {
+                continue;
+            }
 
-            // Теперь смотрим в тело цикла - ищем вызов next()
+            // Проверяем, что вызывается hasNext()
+            if (!isMethodNamed(cp, hasNextCpi.cpIndex(), "hasNext")) {
+                continue;
+            }
+
+            int iteratorLocal = lvLoad.localIndex();
+
+            // Определяем, какая ветка - выход, какая - тело
             if (condBlock.successors().size() != 2) continue;
+            BasicBlock s0 = condBlock.successors().get(0);
+            BasicBlock s1 = condBlock.successors().get(1);
 
-            BasicBlock bodyEntry = condBlock.successors().get(0);   // fallthrough идет в тело
-            BasicBlock exitblock = condBlock.successors().get(1);   // jump идет на выход
-
-            // Проверяем, что в теле есть вызов next() и присваивание
-            boolean hasNext = false;
-            int iterationVarIdx = -1;
-
-            for (BasicBlock bodyBlock : bodyEntry.successors()) {
-                List<Insn> bodyInsn = bodyBlock.instructions();
-                for (int i = 0; i < bodyInsn.size() - 2; i++) {
-                    Insn i0 = bodyInsn.get(i);
-                    Insn i1 = bodyInsn.get(i + 1);
-                    Insn i2 = bodyInsn.get(i + 2);
-
-                    // Ищем: aload iterator; invokeinterface next(); astore var
-                    if (i0 instanceof LocalVarInsn lv0 && lv0.opcode() == Opcode.ALOAD &&
-                            i1 instanceof ConstantPoolInsn cpi && cpi.opcode() == Opcode.INVOKEINTERFACE &&
-                            i2 instanceof LocalVarInsn lv2 && lv2.opcode() == Opcode.ASTORE) {
-                        try {
-                            CpInfo info = cp.entry(cpi.cpIndex());
-                            if (info instanceof CpInterfaceMethodref imr) {
-                                CpNameAndType nt = (CpNameAndType) cp.entry(imr.nameAndTypeIndex());
-                                String methodName = cp.getUtf8(nt.nameIndex());
-                                if ("next".equals(methodName)) {
-                                    hasNext = true;
-                                    iterationVarIdx = lv2.localIndex();
-                                    break;
-                                }
-                            }
-                        } catch (Exception e) {
-                            // игнорируем ошибки
-                        }
-                    }
-                }
-                if (hasNext) break;
+            BasicBlock bodyEntry;
+            if (j.targetOffset() == s0.startOffset()) {
+                bodyEntry = s1;
+            } else if (j.targetOffset() == s1.startOffset()) {
+                bodyEntry = s0;
+            } else {
+                continue;
             }
 
-            if (!hasNext || iterationVarIdx < 0) continue;
+            // Тело должно возвращаться в cond (back-edge)
+            if (bodyEntry.successors().stream().noneMatch(bb -> bb == condBlock)) {
+                continue;
+            }
 
-            // Пока не реализуем полную логику распознавания для-каждого
-            // Возвращаем null чтобы упасть на while loop распознавание
-            return null;
+            List<Insn> bodyInsns = new ArrayList<>(bodyEntry.instructions());
+            if (bodyInsns.size() < 3) continue;
+
+            // Парсим префикс next()
+            int idx = 0;
+            if (!(bodyInsns.get(idx) instanceof LocalVarInsn bLoad &&
+                    bLoad.opcode() == Opcode.ALOAD && bLoad.localIndex() == iteratorLocal)) {
+                continue;
+            }
+            idx++;
+
+            if (!(bodyInsns.get(idx) instanceof ConstantPoolInsn nextCpi &&
+                    (nextCpi.opcode() == Opcode.INVOKEINTERFACE || nextCpi.opcode() == Opcode.INVOKEVIRTUAL) &&
+                    isMethodNamed(cp, nextCpi.cpIndex(), "next"))) {
+                continue;
+            }
+            idx++;
+
+            String varType = "var";
+            // optional checkcast
+            if (idx < bodyInsns.size() && bodyInsns.get(idx) instanceof ConstantPoolInsn cc && cc.opcode() == Opcode.CHECKCAST) {
+                varType = cp.getClassName(cc.cpIndex()).replace('/', '.');
+                idx++;
+            }
+
+            if (!(idx < bodyInsns.size() && bodyInsns.get(idx) instanceof LocalVarInsn store && store.opcode() == Opcode.ASTORE)) {
+                continue;
+            }
+            int loopVarIdx = ((LocalVarInsn) bodyInsns.get(idx)).localIndex();
+            idx++;
+
+            // Удаляем хвостовой goto обратно в cond, если он есть
+            if (!bodyInsns.isEmpty()) {
+                Insn tail = bodyInsns.getLast();
+                if (tail instanceof JumpInsn jmp && jmp.opcode() == Opcode.GOTO && jmp.targetOffset() == condBlock.startOffset()) {
+                    bodyInsns.removeLast();
+                }
+            }
+
+            // Оставляем только тело после next()/astore
+            List<Insn> remaining = bodyInsns.subList(idx, bodyInsns.size());
+            BlockStmt bodyBlock = builder.buildBlock(new ArrayList<>(remaining));
+
+            // Пытаемся найти инициализацию iteratorVar
+            Expr iterableExpr = findIterableExpr(cfg, iteratorLocal, cp, localNames);
+            if (iterableExpr == null) {
+                iterableExpr = new VarExpr(localNames.nameForLocal(iteratorLocal));
+            }
+
+            String varName = localNames.nameForLocal(loopVarIdx);
+            BlockStmt methodBody = new BlockStmt();
+            methodBody.add(new EnhancedForStmt(varType, varName, iterableExpr, bodyBlock));
+            return new MethodAst(name, desc, methodBody);
         }
 
+        return null;
+    }
+
+    private boolean isMethodNamed(ConstantPool cp, int cpIndex, String expectedName) {
+        try {
+            CpInfo info = cp.entry(cpIndex);
+            if (info instanceof CpInterfaceMethodref imr) {
+                CpNameAndType nt = (CpNameAndType) cp.entry(imr.nameAndTypeIndex());
+                String methodName = cp.getUtf8(nt.nameIndex());
+                return expectedName.equals(methodName);
+            }
+            if (info instanceof CpMethodref mr) {
+                CpNameAndType nt = (CpNameAndType) cp.entry(mr.nameAndTypeIndex());
+                String methodName = cp.getUtf8(nt.nameIndex());
+                return expectedName.equals(methodName);
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
+    }
+
+    private Expr findIterableExpr(ControlFlowGraph cfg, int iteratorLocal, ConstantPool cp, LocalNameProvider names) {
+        for (BasicBlock bb : cfg.blocks()) {
+            List<Insn> insns = bb.instructions();
+            for (int i = 0; i < insns.size() - 2; i++) {
+                Insn i0 = insns.get(i);
+                Insn i1 = insns.get(i + 1);
+                Insn i2 = insns.get(i + 2);
+
+                if (!(i0 instanceof LocalVarInsn load && load.opcode() == Opcode.ALOAD)) continue;
+                if (!(i1 instanceof ConstantPoolInsn cpi &&
+                        (cpi.opcode() == Opcode.INVOKEINTERFACE || cpi.opcode() == Opcode.INVOKEVIRTUAL) &&
+                        isMethodNamed(cp, cpi.cpIndex(), "iterator"))) continue;
+                if (!(i2 instanceof LocalVarInsn store && store.opcode() == Opcode.ASTORE && store.localIndex() == iteratorLocal))
+                    continue;
+
+                return new VarExpr(names.nameForLocal(load.localIndex()));
+            }
+        }
         return null;
     }
 
