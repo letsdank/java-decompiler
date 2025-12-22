@@ -267,6 +267,17 @@ public final class JavaPrettyPrinter {
             }
         }
         indent--;
+
+        // Опциональный finally блок
+        if (tcs.finallyBlock() != null && !tcs.finallyBlock().statements().isEmpty()) {
+            appendLine("} finally {");
+            indent++;
+            for (Stmt s : tcs.finallyBlock().statements()) {
+                printStmt(s);
+            }
+            indent--;
+        }
+
         appendLine("}");
     }
 
