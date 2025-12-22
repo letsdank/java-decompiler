@@ -71,13 +71,19 @@ public final class MethodDecompiler {
         // 2. Строим CFG
         ControlFlowGraph cfg = cfgBuilder.build(code);
 
-        // 2.1. Попытка распознать простой switch
+        // 2.1. Попытка распознать synchronized блок
+        MethodAst syncAst = tryBuildSynchronized(cfg, localNames, cp, options, bootstrap, name, desc);
+        if (syncAst != null) {
+            return postProcessLoops(syncAst);
+        }
+
+        // 2.2. Попытка распознать простой switch
         MethodAst switchAst = tryBuildSwitch(cfg, localNames, cp, options, bootstrap, name, desc);
         if (switchAst != null) {
             return postProcessLoops(switchAst);
         }
 
-        // 2.2. Попытка рекурсивной структуризации для ацикличных графов:
+        // 2.3. Попытка рекурсивной структуризации для ацикличных графов:
         //      if/if-else/последовательности без циклов.
         if (!hasBackEdge(cfg)) {
             MethodAst structured = tryStructurizeAcyclicCfg(cfg, localNames, cp, options, bootstrap, name, desc);
@@ -289,6 +295,81 @@ public final class MethodDecompiler {
         }
 
         return null;
+    }
+
+    private MethodAst tryBuildSynchronized(ControlFlowGraph cfg, LocalNameProvider localNames, ConstantPool cp,
+                                           DecompilerOptions options, BootstrapMethodsAttribute bootstrap,
+                                           String name, String desc) {
+        ExpressionBuilder builder = new ExpressionBuilder(localNames, cp, options, bootstrap);
+
+        for (BasicBlock bb : cfg.blocks()) {
+            List<Insn> insns = bb.instructions();
+            if (insns.size() < 3) continue; // нужно минимум: monitor, тело, monitorexit
+
+            int monitorEnterIdx = -1;
+            int monitorExitIdx = -1;
+
+            // Ищем MONITORENTER в начале блока
+            for (int i = 0; i < insns.size(); i++) {
+                if (insns.get(i) instanceof SimpleInsn s && s.opcode() == Opcode.MONITORENTER) {
+                    monitorEnterIdx = i;
+                    break;
+                }
+            }
+
+            if (monitorEnterIdx < 0 || monitorEnterIdx == 0) continue; // нужно загрузить monitor перед этим
+
+            // Ищем MONITOREXIT в конце блока или перед return
+            for (int i = insns.size() - 1; i >= monitorEnterIdx + 1; i--) {
+                if (insns.get(i) instanceof SimpleInsn s && s.opcode() == Opcode.MONITOREXIT) {
+                    monitorExitIdx = i;
+                    break;
+                }
+            }
+
+            if (monitorExitIdx < 0) continue; // нет корреспондирующего MONITOREXIT
+
+            try {
+                // Пытаемся получить monitor-выражение из инструкции перед MONITORENTER
+                if (monitorEnterIdx > 0) {
+                    Insn prevInsn = insns.get(monitorEnterIdx - 1);
+                    Expr monitor = null;
+                    if (prevInsn instanceof LocalVarInsn lv) {
+                        monitor = new VarExpr(localNames.nameForLocal(lv.localIndex()));
+                    } else if (prevInsn instanceof SimpleInsn s) {
+                        // aload_0, aload_1 и т.п.
+                        Integer idx = extractLoadIndex(s.opcode());
+                        if (idx != null) {
+                            monitor = new VarExpr(localNames.nameForLocal(idx));
+                        }
+                    }
+
+                    if (monitor != null) {
+                        // Извлекаем тело между MONITORENTER и MONITOREXIT
+                        List<Insn> bodyInsns = insns.subList(monitorEnterIdx + 1, monitorExitIdx);
+                        BlockStmt bodyBlock = builder.buildBlock(new ArrayList<>(bodyInsns));
+
+                        BlockStmt methodBody = new BlockStmt();
+                        methodBody.add(new SynchronizedStmt(monitor, bodyBlock));
+                        return new MethodAst(name, desc, methodBody);
+                    }
+                }
+            } catch (Exception e) {
+                // игнорируем ошибки при разборе
+            }
+        }
+
+        return null;
+    }
+
+    private Integer extractLoadIndex(Opcode op) {
+        return switch (op) {
+            case ALOAD_0, ILOAD_0, LLOAD_0, FLOAD_0, DLOAD_0 -> 0;
+            case ALOAD_1, ILOAD_1, LLOAD_1, FLOAD_1, DLOAD_1 -> 1;
+            case ALOAD_2, ILOAD_2, LLOAD_2, FLOAD_2, DLOAD_2 -> 2;
+            case ALOAD_3, ILOAD_3, LLOAD_3, FLOAD_3, DLOAD_3 -> 3;
+            default -> null;
+        };
     }
 
     private MethodAst tryBuildSwitch(ControlFlowGraph cfg, LocalNameProvider localNames, ConstantPool cp,

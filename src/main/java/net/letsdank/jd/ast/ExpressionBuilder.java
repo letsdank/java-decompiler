@@ -292,6 +292,17 @@ public final class ExpressionBuilder {
                         }
                     }
 
+                    // монитор
+                    case MONITORENTER -> {
+                        Expr monitor = stack.pop();
+                        // Храним в виде ExprStmt для простоты; позже можно завернуть в SynchronizedStmt
+                        block.add(new ExprStmt(new CallExpr(null, null, "monitorenter", List.of(monitor))));
+                    }
+                    case MONITOREXIT -> {
+                        Expr monitor = stack.pop();
+                        block.add(new ExprStmt(new CallExpr(null, null, "monitorexit", List.of(monitor))));
+                    }
+
                     default -> {
                         // игнорируем всякие nop, etc (пока что)
                     }

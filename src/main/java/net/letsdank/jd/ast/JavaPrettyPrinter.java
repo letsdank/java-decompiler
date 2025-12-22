@@ -138,6 +138,8 @@ public final class JavaPrettyPrinter {
             printLoop(loop);
         } else if (stmt instanceof ForStmt forStmt) {
             printFor(forStmt);
+        } else if (stmt instanceof EnhancedForStmt efStmt) {
+            printEnhancedFor(efStmt);
         } else if (stmt instanceof SwitchStmt sw) {
             printSwitch(sw);
         } else if (stmt instanceof AssignStmt as) {
@@ -148,6 +150,8 @@ public final class JavaPrettyPrinter {
             printExprStmt(es);
         } else if (stmt instanceof TryCatchStmt tcs) {
             printTryCatchStmt(tcs);
+        } else if (stmt instanceof SynchronizedStmt sync) {
+            printSynchronized(sync);
         } else if (stmt instanceof CommentStmt cs) {
             appendLine(cs.text());
         } else {
@@ -186,6 +190,16 @@ public final class JavaPrettyPrinter {
         appendLine("for (" + initStr + " " + fs.condition() + "; " + updateStr + ") {");
         indent++;
         for (Stmt s : fs.body().statements()) {
+            printStmt(s);
+        }
+        indent--;
+        appendLine("}");
+    }
+
+    private void printEnhancedFor(EnhancedForStmt efs) {
+        appendLine("for (" + efs.varType() + " " + efs.varName() + " : " + efs.iterable() + ") {");
+        indent++;
+        for (Stmt s : efs.body().statements()) {
             printStmt(s);
         }
         indent--;
@@ -278,6 +292,16 @@ public final class JavaPrettyPrinter {
             indent--;
         }
 
+        appendLine("}");
+    }
+
+    private void printSynchronized(SynchronizedStmt sync) {
+        appendLine("synchronized (" + sync.monitor() + ") {");
+        indent++;
+        for (Stmt s : sync.body().statements()) {
+            printStmt(s);
+        }
+        indent--;
         appendLine("}");
     }
 
