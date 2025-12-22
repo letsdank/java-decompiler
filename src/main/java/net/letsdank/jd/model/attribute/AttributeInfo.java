@@ -2,6 +2,6 @@ package net.letsdank.jd.model.attribute;
 
 public sealed interface AttributeInfo
         permits CodeAttribute, RawAttribute, RuntimeVisibleAnnotationsAttribute,
-        BootstrapMethodsAttribute {
+        BootstrapMethodsAttribute, SignatureAttribute, ExceptionsAttribute {
     String name();
 }

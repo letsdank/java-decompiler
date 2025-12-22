@@ -8,8 +8,11 @@ import net.letsdank.jd.ast.stmt.*;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
+import net.letsdank.jd.model.attribute.AttributeInfo;
+import net.letsdank.jd.model.attribute.ExceptionsAttribute;
 
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 import java.util.List;
 
 public final class JavaPrettyPrinter {
@@ -99,7 +102,33 @@ public final class JavaPrettyPrinter {
         }
         header.append(")");
 
+        List<String> thrown = collectThrownExceptions(method, cp);
+        if (!thrown.isEmpty()) {
+            header.append(" throws ");
+            for (int i = 0; i < thrown.size(); i++) {
+                if (i > 0) header.append(", ");
+                header.append(thrown.get(i));
+            }
+        }
+
         return header.toString();
+    }
+
+    private List<String> collectThrownExceptions(MethodInfo method, ConstantPool cp) {
+        for (AttributeInfo attr : method.attributes()) {
+            if (attr instanceof ExceptionsAttribute ex) {
+                List<String> names = new ArrayList<>(ex.exceptionIndexTable().length);
+                for (int idx : ex.exceptionIndexTable()) {
+                    try {
+                        names.add(cp.getClassName(idx).replace('/', '.'));
+                    } catch (Exception e) {
+                        names.add("<bad-exception>");
+                    }
+                }
+                return names;
+            }
+        }
+        return List.of();
     }
 
     private void printStmt(Stmt stmt) {

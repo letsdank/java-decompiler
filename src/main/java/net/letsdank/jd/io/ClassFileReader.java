@@ -279,6 +279,22 @@ public final class ClassFileReader {
                 data[i] = (byte) in.readU1();
             }
             return readRuntimeVisibleAnnotationsAttribute(name, data, cp);
+        } else if ("Signature".equals(name)) {
+            if (length != 2) {
+                // некорректная длина, но не валим все чтение
+                for (long k = 0; k < length; k++) in.readU1();
+                return new RawAttribute(name, new byte[0]);
+            }
+            int sigIndex = in.readU2();
+            String sig = cp.getUtf8(sigIndex);
+            return new SignatureAttribute(name, sig);
+        } else if ("Exceptions".equals(name)) {
+            int numberOfExceptions = in.readU2();
+            int[] exceptionIndexTable = new int[numberOfExceptions];
+            for (int i = 0; i < numberOfExceptions; i++) {
+                exceptionIndexTable[i] = in.readU2();
+            }
+            return new ExceptionsAttribute(name, exceptionIndexTable);
         } else if ("BootstrapMethods".equals(name)) {
             byte[] data = new byte[(int) length];
             for (int i = 0; i < length; i++) {
