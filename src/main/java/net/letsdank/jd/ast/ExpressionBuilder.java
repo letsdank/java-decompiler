@@ -123,18 +123,18 @@ public final class ExpressionBuilder {
                         // Пока просто оставляем как есть, т.к. в Java часто неявное преобразование
                         stack.push(value);
                     }
-                    case I2B,I2C,I2S -> {
+                    case I2B, I2C, I2S -> {
                         // Преобразования в меньшие типы
                         Expr value = stack.pop();
                         stack.push(value);
                     }
 
                     // сравнения данных, float, double (результат: -1, 0 или 1)
-                    case LCMP,FCMPL,FCMPG,DCMPL,DCMPG -> {
+                    case LCMP, FCMPL, FCMPG, DCMPL, DCMPG -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
                         // Представим как обычное сравнение (хотя технически это не совсем правильно)
-                        stack.push(new BinaryExpr("-", left,right));
+                        stack.push(new BinaryExpr("-", left, right));
                     }
 
                     // возвраты
@@ -390,7 +390,7 @@ public final class ExpressionBuilder {
                     case LDC2_W -> {
                         // ldc2_w #idx -> long или double константа
                         CpInfo entry = cp.entry(cpi.cpIndex());
-                        if(entry instanceof CpLong l) {
+                        if (entry instanceof CpLong l) {
                             // Представим как строку для упрощения (long literals вроде 123L)
                             stack.push(new StringLiteralExpr(String.valueOf(l.value())));
                         } else if (entry instanceof CpDouble d) {
@@ -728,163 +728,8 @@ public final class ExpressionBuilder {
      * операнды условия. Нужен для if/if_icmp и прочих IFxx.
      */
     public Deque<Expr> simulateStackBeforeBranch(List<Insn> insns) {
-        Deque<Expr> stack = new ArrayDeque<>();
-
-        for (Insn insn : insns) {
-            if (insn instanceof JumpInsn) {
-                break; // не обрабатываем сам Jump
-            }
-
-            if (insn instanceof SimpleInsn s) {
-                switch (s.opcode()) {
-                    // арифметика
-                    case IADD -> {
-                        Expr right = stack.pop();
-                        Expr left = stack.pop();
-                        stack.push(new BinaryExpr("+", left, right));
-                    }
-                    case ISUB -> {
-                        Expr right = stack.pop();
-                        Expr left = stack.pop();
-                        stack.push(new BinaryExpr("-", left, right));
-                    }
-                    case IMUL -> {
-                        Expr right = stack.pop();
-                        Expr left = stack.pop();
-                        stack.push(new BinaryExpr("*", left, right));
-                    }
-                    case IDIV -> {
-                        Expr right = stack.pop();
-                        Expr left = stack.pop();
-                        stack.push(new BinaryExpr("/", left, right));
-                    }
-                    case IREM -> {
-                        Expr right = stack.pop();
-                        Expr left = stack.pop();
-                        stack.push(new BinaryExpr("%", left, right));
-                    }
-                    case INEG -> {
-                        Expr v = stack.pop();
-                        stack.push(new UnaryExpr("-", v));
-                    }
-
-                    // побитовые операции
-                    case IAND -> {
-                        Expr right = stack.pop();
-                        Expr left = stack.pop();
-                        stack.push(new BinaryExpr("&", left, right));
-                    }
-                    case IOR -> {
-                        Expr right = stack.pop();
-                        Expr left = stack.pop();
-                        stack.push(new BinaryExpr("|", left, right));
-                    }
-                    case IXOR -> {
-                        Expr right = stack.pop();
-                        Expr left = stack.pop();
-                        stack.push(new BinaryExpr("^", left, right));
-                    }
-
-                    // сдвиги
-                    case ISHL -> {
-                        Expr right = stack.pop();
-                        Expr left = stack.pop();
-                        stack.push(new BinaryExpr("<<", left, right));
-                    }
-                    case ISHR -> {
-                        Expr right = stack.pop();
-                        Expr left = stack.pop();
-                        stack.push(new BinaryExpr(">>", left, right));
-                    }
-                    case IUSHR -> {
-                        Expr right = stack.pop();
-                        Expr left = stack.pop();
-                        stack.push(new BinaryExpr(">>>", left, right));
-                    }
-
-                    // iconst_*
-                    case ICONST_M1 -> stack.push(new IntConstExpr(-1));
-                    case ICONST_0 -> stack.push(new IntConstExpr(0));
-                    case ICONST_1 -> stack.push(new IntConstExpr(1));
-                    case ICONST_2 -> stack.push(new IntConstExpr(2));
-                    case ICONST_3 -> stack.push(new IntConstExpr(3));
-                    case ICONST_4 -> stack.push(new IntConstExpr(4));
-                    case ICONST_5 -> stack.push(new IntConstExpr(5));
-
-                    // iload_0..3
-                    case ILOAD_0 -> stack.push(varExpr(0));
-                    case ILOAD_1 -> stack.push(varExpr(1));
-                    case ILOAD_2 -> stack.push(varExpr(2));
-                    case ILOAD_3 -> stack.push(varExpr(3));
-
-                    // aload_0..3
-                    case ALOAD_0 -> stack.push(varExpr(0));
-                    case ALOAD_1 -> stack.push(varExpr(1));
-                    case ALOAD_2 -> stack.push(varExpr(2));
-                    case ALOAD_3 -> stack.push(varExpr(3));
-
-                    // длина массива
-                    case ARRAYLENGTH -> {
-                        Expr array = stack.pop();
-                        stack.push(new ArrayLengthExpr(array));
-                    }
-
-                    // стековые операции
-                    case POP -> {
-                        if (!stack.isEmpty()) {
-                            stack.pop();
-                        }
-                    }
-                    case DUP -> {
-                        if (!stack.isEmpty()) {
-                            stack.push(stack.peek());
-                        }
-                    }
-
-                    default -> {
-                        // остальные SimpleInsn для целей условия пока игнорируем
-                    }
-                }
-            } else if (insn instanceof LocalVarInsn lv) {
-                switch (lv.opcode()) {
-                    case ILOAD -> {
-                        int idx = lv.localIndex();
-                        stack.push(varExpr(idx));
-                    }
-                    case ALOAD -> {
-                        int idx = lv.localIndex();
-                        stack.push(varExpr(idx));
-                    }
-                    default -> {
-                    }
-                }
-            } else if (insn instanceof IntOperandInsn io) {
-                switch (io.opcode()) {
-                    case BIPUSH, SIPUSH -> stack.push(new IntConstExpr(io.operand()));
-                    default -> {
-                    }
-                }
-            } else if (insn instanceof ConstantPoolInsn cpi) {
-                // Иногда условие завязано на ldc-константах
-                switch (cpi.opcode()) {
-                    case LDC -> {
-                        CpInfo entry = cp.entry(cpi.cpIndex());
-                        if (entry instanceof CpInteger i) {
-                            stack.push(new IntConstExpr(i.value()));
-                        } else if (entry instanceof CpString s) {
-                            String text = cp.getUtf8(s.stringIndex());
-                            stack.push(new StringLiteralExpr(text));
-                        }
-                        // остальные типы для условий пока можно игнорировать
-                    }
-                    default -> {
-                    }
-                }
-            }
-            // IINC и прочее на стек не влияют напрямую - пропускаем
-        }
-
-        return stack;
+        StackSimulator simulator = new StackSimulator(localNames, cp);
+        return simulator.simulateUntilBranch(insns);
     }
 
     private Expr makeStaticFieldExpr(int cpIndex) {

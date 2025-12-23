@@ -174,95 +174,8 @@ public final class MethodDecompiler {
      * - IF_ICMPGE x >= y
      */
     private Expr buildConditionExpr(JumpInsn j, Deque<Expr> stackBefore) {
-        Opcode op = j.opcode();
-        // Копию, чтобы вынимать сверху
-        Deque<Expr> stack = new ArrayDeque<>(stackBefore);
-
-        switch (op) {
-            // --- унарные сравнения с нулем ---
-            case IFEQ -> {
-                Expr x = stack.pop();
-                return new BinaryExpr("==", x, new IntConstExpr(0));
-            }
-            case IFNE -> {
-                Expr x = stack.pop();
-                return new BinaryExpr("!=", x, new IntConstExpr(0));
-            }
-            case IFLT -> {
-                Expr x = stack.pop();
-                return new BinaryExpr("<", x, new IntConstExpr(0));
-            }
-            case IFGE -> {
-                Expr x = stack.pop();
-                return new BinaryExpr(">=", x, new IntConstExpr(0));
-            }
-            case IFGT -> {
-                Expr x = stack.pop();
-                return new BinaryExpr(">", x, new IntConstExpr(0));
-            }
-            case IFLE -> {
-                Expr x = stack.pop();
-                return new BinaryExpr("<=", x, new IntConstExpr(0));
-            }
-
-            // --- бинарные IF_ICMPxx (int-сравнения) ---
-            case IF_ICMPEQ -> {
-                Expr right = stack.pop();
-                Expr left = stack.pop();
-                return new BinaryExpr("==", left, right);
-            }
-            case IF_ICMPNE -> {
-                Expr right = stack.pop();
-                Expr left = stack.pop();
-                return new BinaryExpr("!=", left, right);
-            }
-            case IF_ICMPLT -> {
-                Expr right = stack.pop();
-                Expr left = stack.pop();
-                return new BinaryExpr("<", left, right);
-            }
-            case IF_ICMPGE -> {
-                Expr right = stack.pop();
-                Expr left = stack.pop();
-                return new BinaryExpr(">=", left, right);
-            }
-            case IF_ICMPGT -> {
-                Expr right = stack.pop();
-                Expr left = stack.pop();
-                return new BinaryExpr(">", left, right);
-            }
-            case IF_ICMPLE -> {
-                Expr right = stack.pop();
-                Expr left = stack.pop();
-                return new BinaryExpr("<=", left, right);
-            }
-
-            // --- ссылочные сравнения IF_ACMPxx ---
-            case IF_ACMPEQ -> {
-                Expr right = stack.pop();
-                Expr left = stack.pop();
-                return new BinaryExpr("==", left, right);
-            }
-            case IF_ACMPNE -> {
-                Expr right = stack.pop();
-                Expr left = stack.pop();
-                return new BinaryExpr("!=", left, right);
-            }
-
-            // --- null проверки ---
-            case IFNULL -> {
-                Expr x = stack.pop();
-                return new BinaryExpr("==", x, new NullExpr());
-            }
-            case IFNONNULL -> {
-                Expr x = stack.pop();
-                return new BinaryExpr("!=", x, new NullExpr());
-            }
-
-            default -> {
-                return null;
-            }
-        }
+        ConditionBuilder conditionBuilder = new ConditionBuilder();
+        return conditionBuilder.buildForJump(j, stackBefore);
     }
 
     private IfStmt tryBuildIfFromCfg(ControlFlowGraph cfg, LocalNameProvider localNames, ConstantPool cp) {
@@ -1540,53 +1453,8 @@ public final class MethodDecompiler {
     }
 
     private Expr buildIfConditionForFallthrough(JumpInsn j, Deque<Expr> stackBefore) {
-        Opcode op = j.opcode();
-        Deque<Expr> stack = new ArrayDeque<>(stackBefore);
-
-        // Для бинарных сравнений IF_ICMPxx
-        switch (op) {
-            case IF_ICMPEQ, IF_ICMPNE,
-                 IF_ICMPGE, IF_ICMPLT, IF_ICMPGT, IF_ICMPLE -> {
-
-                Expr right = stack.pop();
-                Expr left = stack.pop();
-                // Семантика: если (cmp) -> прыжок. Нам нужно "иначе" (fallthrough).
-                return switch (op) {
-                    case IF_ICMPEQ -> new BinaryExpr("!=", left, right);                // !(left == right)
-                    case IF_ICMPNE -> new BinaryExpr("==", left, right);                // !(left != right)
-                    case IF_ICMPGE -> new BinaryExpr("<", left, right);                 // !(left >= right)
-                    case IF_ICMPLT -> new BinaryExpr(">=", left, right);                // !(left < right)
-                    case IF_ICMPGT -> new BinaryExpr("<=", left, right);                // !(left > right)
-                    case IF_ICMPLE -> new BinaryExpr(">", left, right);                 // !(left <= right)
-                    default -> null;
-                };
-            }
-
-            // Ссылочные IF_ACMPxx: инвертируем так же, как int
-            case IF_ACMPEQ, IF_ACMPNE -> {
-                Expr right = stack.pop();
-                Expr left = stack.pop();
-                return switch (op) {
-                    case IF_ACMPEQ -> new BinaryExpr("!=", left, right); // !(a == b) -> a != b
-                    case IF_ACMPNE -> new BinaryExpr("==", left, right); // !(a != b) -> a == b
-                    default -> null;
-                };
-            }
-
-            default -> {
-                // Для унарных IFxx x < 0 / x >= 0 / x == 0 / x != 0
-                Expr x = stack.pop();
-                return switch (op) {
-                    case IFEQ -> new BinaryExpr("!=", x, new IntConstExpr(0));  // !(x == 0)
-                    case IFNE -> new BinaryExpr("==", x, new IntConstExpr(0));  // !(x != 0)
-                    case IFLT -> new BinaryExpr(">=", x, new IntConstExpr(0));  // !(x < 0)
-                    case IFGE -> new BinaryExpr("<", x, new IntConstExpr(0));   // !(x >= 0)
-                    case IFGT -> new BinaryExpr("<=", x, new IntConstExpr(0));  // !(x > 0)
-                    case IFLE -> new BinaryExpr(">", x, new IntConstExpr(0));   // !(x <= 0)
-                    default -> buildConditionExpr(j, stackBefore); // fallback: условие перехода
-                };
-            }
-        }
+        ConditionBuilder conditionBuilder = new ConditionBuilder();
+        return conditionBuilder.buildForFallthrough(j, stackBefore);
     }
 
     private Expr buildLoopConditionExpr(JumpInsn j, Deque<Expr> stackBefore, boolean bodyIsTarget) {
