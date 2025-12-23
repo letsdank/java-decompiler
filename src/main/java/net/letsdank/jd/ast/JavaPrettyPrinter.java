@@ -1,9 +1,6 @@
 package net.letsdank.jd.ast;
 
-import net.letsdank.jd.ast.expr.BinaryExpr;
-import net.letsdank.jd.ast.expr.Expr;
-import net.letsdank.jd.ast.expr.IntConstExpr;
-import net.letsdank.jd.ast.expr.VarExpr;
+import net.letsdank.jd.ast.expr.*;
 import net.letsdank.jd.ast.stmt.*;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.ConstantPool;
@@ -233,6 +230,14 @@ public final class JavaPrettyPrinter {
     }
 
     private void printLoop(LoopStmt loop) {
+        // Пытаемся распознать простой for: while (i < n) { ... i++; }
+        ForLoopPattern pattern = tryRecognizeForLoop(loop);
+        if (pattern != null) {
+            printForLoop(pattern);
+            return;
+        }
+
+        // Иначе печатаем как while
         appendLine("while (" + simplifier.simplify(loop.condition()) + ") {");
         indent++;
         for (Stmt s : loop.body().statements()) {
@@ -327,5 +332,76 @@ public final class JavaPrettyPrinter {
 
     private void appendLine(String line) {
         sb.append(" ".repeat(indent * 2)).append(line).append("\n");
+    }
+
+    /**
+     * Распознаем паттерн for-цикла: while (i < n) { ... i++; }
+     */
+    private ForLoopPattern tryRecognizeForLoop(LoopStmt loop) {
+        List<Stmt> body = loop.body().statements();
+        if (body.isEmpty()) return null;
+
+        // Последний statement должен быть инкрементом
+        Stmt lastStmt = body.getLast();
+        String inductionVar = null;
+        Stmt updateStmt = null;
+
+        // i++; или i = i + 1;
+        if (lastStmt instanceof AssignStmt as) {
+            if (as.target() instanceof VarExpr tv && as.value() instanceof BinaryExpr be) {
+                if ("+".equals(be.op()) && be.left() instanceof VarExpr lv &&
+                        be.right() instanceof IntConstExpr ic && ic.value() >= 1 &&
+                        tv.name().equals(lv.name())) {
+                    inductionVar = tv.name();
+                    updateStmt = as;
+                }
+            }
+        }
+
+        if (inductionVar == null) return null;
+
+        // Проверяем, что условие использует эту переменную
+        Expr condition = loop.condition();
+        if (!conditionUsesVar(condition, inductionVar)) return null;
+
+        // Формируем for-паттерн
+        List<Stmt> forBody = body.subList(0, body.size() - 1);
+        return new ForLoopPattern(inductionVar, condition, updateStmt, forBody);
+    }
+
+    private boolean conditionUsesVar(Expr condition, String varName) {
+        if (condition instanceof BinaryExpr be) {
+            return exprContainsVar(be.left(), varName) || exprContainsVar(be.right(), varName);
+        }
+        return exprContainsVar(condition, varName);
+    }
+
+    private boolean exprContainsVar(Expr expr, String varName) {
+        if (expr instanceof VarExpr v) {
+            return v.name().equals(varName);
+        }
+        if (expr instanceof BinaryExpr be) {
+            return exprContainsVar(be.left(), varName) || exprContainsVar(be.right(), varName);
+        }
+        if (expr instanceof UnaryExpr ue) {
+            return exprContainsVar(ue.expr(), varName);
+        }
+        // Для остальных считаем, что не содержит
+        return false;
+    }
+
+    private void printForLoop(ForLoopPattern pattern) {
+        // for (условие опускаем init, т.к. его обычно нет в while; updateStmt)
+        String updateStr = stmtToInline(pattern.updateStmt);
+        appendLine("for (; " + simplifier.simplify(pattern.condition) + "; " + updateStr.replace(";", "") + ") {");
+        indent++;
+        for (Stmt s : pattern.body) {
+            printStmt(s);
+        }
+        indent--;
+        appendLine("}");
+    }
+
+    private record ForLoopPattern(String inductionVar, Expr condition, Stmt updateStmt, List<Stmt> body) {
     }
 }
