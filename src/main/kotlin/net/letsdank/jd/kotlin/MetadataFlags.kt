@@ -53,8 +53,7 @@ fun classKind(kmClass: KmClass): ClassKind =
 
 fun enumEntries(kmClass: KmClass): List<String> {
     // В новых версиях KmClass уже есть список enumEntries
-    val entries: List<KmEnumEntry> = kmClass.kmEnumEntries
-    return entries.map { it.name }
+    return kmClass.enumEntries.map { it.toString() }
 }
 
 /** sealed subclasses (FQ-имена наследников sealed-класса) */
