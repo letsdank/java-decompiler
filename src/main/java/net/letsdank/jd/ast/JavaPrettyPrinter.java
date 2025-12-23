@@ -18,6 +18,7 @@ import java.util.List;
 public final class JavaPrettyPrinter {
     private final StringBuilder sb = new StringBuilder();
     private int indent = 0;
+    private final ExpressionSimplifier simplifier = new ExpressionSimplifier();
 
     public String printMethod(ClassFile cf, MethodInfo method, MethodAst ast) {
         // сброс
@@ -161,7 +162,7 @@ public final class JavaPrettyPrinter {
     }
 
     private void printIf(IfStmt ifs) {
-        Expr cond = ifs.condition();
+        Expr cond = simplifier.simplify(ifs.condition());
 
         appendLine("if (" + cond + ") {");
         indent++;
@@ -187,7 +188,7 @@ public final class JavaPrettyPrinter {
         String initStr = fs.init() != null ? stmtToInline(fs.init()) : "";
         String updateStr = fs.update() != null ? stmtToInline(fs.update()) : "";
 
-        appendLine("for (" + initStr + " " + fs.condition() + "; " + updateStr + ") {");
+        appendLine("for (" + initStr + " " + simplifier.simplify(fs.condition()) + "; " + updateStr + ") {");
         indent++;
         for (Stmt s : fs.body().statements()) {
             printStmt(s);
@@ -232,7 +233,7 @@ public final class JavaPrettyPrinter {
     }
 
     private void printLoop(LoopStmt loop) {
-        appendLine("while (" + loop.condition() + ") {");
+        appendLine("while (" + simplifier.simplify(loop.condition()) + ") {");
         indent++;
         for (Stmt s : loop.body().statements()) {
             printStmt(s);
@@ -253,16 +254,20 @@ public final class JavaPrettyPrinter {
             return;
         }
 
-        appendLine(target.toString() + " = " + value.toString() + ";");
+        Expr simplified = simplifier.simplify(value);
+        appendLine(target.toString() + " = " + simplified.toString() + ";");
     }
 
     private void printReturn(ReturnStmt rs) {
-        if (rs.value() == null) appendLine("return;");
-        else appendLine("return " + rs.value() + ";");
+        if (rs.value() == null) {
+            appendLine("return;");
+        } else {
+            appendLine("return " + simplifier.simplify(rs.value()) + ";");
+        }
     }
 
     private void printExprStmt(ExprStmt es) {
-        appendLine(es.expr().toString() + ";");
+        appendLine(simplifier.simplify(es.expr()).toString() + ";");
     }
 
     private void printTryCatchStmt(TryCatchStmt tcs) {
@@ -310,10 +315,11 @@ public final class JavaPrettyPrinter {
      */
     private String stmtToInline(Stmt s) {
         if (s instanceof AssignStmt as) {
-            return as.target().toString() + " = " + as.value().toString() + ";";
+            Expr simplified = simplifier.simplify(as.value());
+            return as.target().toString() + " = " + simplified.toString() + ";";
         }
         if (s instanceof ExprStmt es) {
-            return es.expr().toString() + ";";
+            return simplifier.simplify(es.expr()).toString() + ";";
         }
         // fallback
         return s.toString();
