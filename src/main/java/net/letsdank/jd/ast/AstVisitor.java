@@ -29,6 +29,8 @@ public interface AstVisitor<R, P> {
             case ArrayLengthExpr al -> visitArrayLength(al, param);
             case TernaryExpr te -> visitTernary(te, param);
             case NullExpr ne -> visitNull(ne, param);
+            case LambdaExpr le -> visitLambda(le, param);
+            case MethodRefExpr mr -> visitMethodRef(mr, param);
         };
     }
 
@@ -118,6 +120,20 @@ public interface AstVisitor<R, P> {
         return null;
     }
 
+    default R visitLambda(LambdaExpr expr, P param) {
+        if (expr.body() != null) {
+            visitExpr(expr.body(), param);
+        }
+        return null;
+    }
+
+    default R visitMethodRef(MethodRefExpr expr, P param) {
+        if (expr.target() != null) {
+            visitExpr(expr.target(), param);
+        }
+        return null;
+    }
+
     // === Statement visitors ===
 
     default R visitStmt(Stmt stmt, P param) {
@@ -130,6 +146,8 @@ public interface AstVisitor<R, P> {
             case SwitchStmt ss -> visitSwitch(ss, param);
             case AssignStmt as -> visitAssign(as, param);
             case ReturnStmt rs -> visitReturn(rs, param);
+            case BreakStmt bs -> visitBreak(bs, param);
+            case ContinueStmt cs -> visitContinue(cs, param);
             case ExprStmt es -> visitExprStmt(es, param);
             case TryCatchStmt tcs -> visitTryCatch(tcs, param);
             case CatchClause cc -> visitCatchClause(cc, param);
@@ -200,6 +218,14 @@ public interface AstVisitor<R, P> {
         if (stmt.value() != null) {
             visitExpr(stmt.value(), param);
         }
+        return null;
+    }
+
+    default R visitBreak(BreakStmt stmt, P param) {
+        return null;
+    }
+
+    default R visitContinue(ContinueStmt stmt, P param) {
         return null;
     }
 

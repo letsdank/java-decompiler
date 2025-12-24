@@ -144,6 +144,10 @@ public final class JavaPrettyPrinter {
             printAssign(as);
         } else if (stmt instanceof ReturnStmt rs) {
             printReturn(rs);
+        } else if (stmt instanceof BreakStmt bs) {
+            printBreak(bs);
+        } else if (stmt instanceof ContinueStmt cs) {
+            printContinue(cs);
         } else if (stmt instanceof ExprStmt es) {
             printExprStmt(es);
         } else if (stmt instanceof TryCatchStmt tcs) {
@@ -268,6 +272,22 @@ public final class JavaPrettyPrinter {
             appendLine("return;");
         } else {
             appendLine("return " + simplifier.simplify(rs.value()) + ";");
+        }
+    }
+
+    private void printBreak(BreakStmt bs){
+        if(bs.label()==null){
+            appendLine("break;");
+        }else{
+            appendLine("break " + bs.label() + ";");
+        }
+    }
+
+    private void printContinue(ContinueStmt cs){
+        if(cs.label()==null){
+            appendLine("continue;");
+        }else{
+            appendLine("continue " + cs.label() + ";");
         }
     }
 

@@ -75,6 +75,7 @@ public final class ExpressionSimplifier {
                         break;
                     case "-":
                         if (rv == 0) return left; // x - 0 -> x
+                        break;
                     case "*":
                         if (rv == 1) return left; // x * 1 -> x
                         if (rv == 0) return new IntConstExpr(0); // x * 0 -> 0
@@ -106,7 +107,7 @@ public final class ExpressionSimplifier {
                         if (lv == 0) return right; // 0 + x -> x
                         break;
                     case "*":
-                        if (lv == 1) return right;
+                        if (lv == 1) return right; // 1 * x -> x
                         if (lv == 0) return new IntConstExpr(0); // 0 * x -> 0
                         break;
                     case "|":

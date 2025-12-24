@@ -119,6 +119,10 @@ public final class KotlinPrettyPrinter {
             printAssign(as);
         } else if (stmt instanceof ReturnStmt rs) {
             printReturn(rs);
+        } else if (stmt instanceof BreakStmt bs) {
+            printBreak(bs);
+        } else if (stmt instanceof ContinueStmt cs) {
+            printContinue(cs);
         } else if (stmt instanceof ExprStmt es) {
             printExprStmt(es);
         } else {
@@ -190,6 +194,16 @@ public final class KotlinPrettyPrinter {
     private void printReturn(ReturnStmt rs) {
         if (rs.value() == null) appendLine("return");
         else appendLine("return " + printExpr(rs.value()));
+    }
+
+    private void printBreak(BreakStmt bs) {
+        if (bs.label() == null) appendLine("break");
+        else appendLine("break@" + bs.label());
+    }
+
+    private void printContinue(ContinueStmt cs) {
+        if (cs.label() == null) appendLine("continue");
+        else appendLine("continue@" + cs.label());
     }
 
     private void printExprStmt(ExprStmt es) {

@@ -1709,8 +1709,13 @@ public final class MethodDecompiler {
         BlockStmt body = ast.body();
         boolean returnsBoolean = ast.descriptor() != null && ast.descriptor().endsWith(")Z");
         BlockStmt transformed = transformBlock(body, returnsBoolean);
-        if (transformed == body) return ast;
-        return new MethodAst(ast.name(), ast.descriptor(), transformed);
+
+        // Применяем dead code elimination
+        DeadCodeEliminator deadCodeEliminator = new DeadCodeEliminator();
+        MethodAst withoutDeadCode = deadCodeEliminator.eliminate(new MethodAst(ast.name(), ast.descriptor(), transformed));
+
+        if (withoutDeadCode.body() == body) return ast;
+        return withoutDeadCode;
     }
 
     private BlockStmt transformBlock(BlockStmt block, boolean returnsBoolean) {

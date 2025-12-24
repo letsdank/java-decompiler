@@ -129,7 +129,7 @@ public final class ExpressionBuilder {
                         stack.push(value);
                     }
 
-                    // сравнения данных, float, double (результат: -1, 0 или 1)
+                    // сравнения long, float, double (результат: -1, 0 или 1)
                     case LCMP, FCMPL, FCMPG, DCMPL, DCMPG -> {
                         Expr right = stack.pop();
                         Expr left = stack.pop();
@@ -673,6 +673,15 @@ public final class ExpressionBuilder {
         CpNameAndType targetNt = (CpNameAndType) cp.entry(targetRef.nameAndTypeIndex());
         String targetName = cp.getUtf8(targetNt.nameIndex());
 
+        // 1. Пробуем распознать lambda/method reference
+        LambdaDetector lambdaDetector = new LambdaDetector(cp,bootstrapMethods);
+        Expr lambda = lambdaDetector.detectLambda(indy,args);
+        if(lambda!=null){
+            stack.push(lambda);
+            return;
+        }
+
+        // 2. Проверяем StringConcatFactory
         boolean isStringConcatFactory =
                 "java.lang.invoke.StringConcatFactory".equals(owner) &&
                         ("makeConcatWithConstants".equals(targetName) || "makeConcat".equals(targetName));
