@@ -147,6 +147,17 @@ public final class ExpressionSimplifier {
             for (Expr a : ne.args()) args.add(simplify(a));
             return new NewExpr(ne.typeName(), List.copyOf(args));
         }
+        if (expr instanceof NewArrayExpr na) {
+            // одиночный массив: упрощаем выражение размера
+            Expr size = simplify(na.size());
+            return new NewArrayExpr(na.elementType(), size);
+        }
+        if (expr instanceof UninitializedNewExpr une) {
+            return une; // не требует упрощения
+        }
+        if (expr instanceof NullExpr ne) {
+            return ne; // не требует упрощения
+        }
         if (expr instanceof CallExpr call) {
             List<Expr> args = new ArrayList<>(call.args().size());
             for (Expr a : call.args()) args.add(simplify(a));
@@ -158,6 +169,15 @@ public final class ExpressionSimplifier {
             Expr t = simplify(te.thenExpr());
             Expr e = simplify(te.elseExpr());
             return new TernaryExpr(c, t, e);
+        }
+        if (expr instanceof LambdaExpr le) {
+            // Упрощаем тело lambda
+            Expr body = le.body() != null ? simplify(le.body()) : null;
+            return new LambdaExpr(le.parameters(), le.paramTypes(), body, le.isBlock());
+        }
+        if (expr instanceof MethodRefExpr mr) {
+            // Method reference не требует упрощения
+            return mr;
         }
 
         return expr; // по умолчанию: без изменений

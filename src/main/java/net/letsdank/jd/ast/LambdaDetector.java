@@ -109,16 +109,24 @@ public final class LambdaDetector {
             return null;
         }
 
-        // Парсим параметры из дескриптора
+        // Парсим параметры из дескриптора метода
         List<String> paramTypes = parseParameterTypes(descriptor);
-        List<String> paramNames = generateParamNames(paramTypes.size());
+
+        // Количество параметров лямбды = общее количество - captured variables
+        int lambdaParamCount = paramTypes.size() - args.size();
+        if (lambdaParamCount < 0) lambdaParamCount = 0;
+
+        List<String> lambdaParamTypes = lambdaParamCount > 0
+                ? paramTypes.subList(args.size(), paramTypes.size())
+                : List.of();
+        List<String> paramNames = generateParamNames(lambdaParamCount);
 
         // Тело лямбды - это вызов синтетического метода
         // В реальной реализации нужно было бы декомпилировать этот метод
         // Пока что создаем placeholder
         Expr body = new CallExpr(null, null, methodName, args);
 
-        return new LambdaExpr(paramNames, paramTypes, body, false);
+        return new LambdaExpr(paramNames, lambdaParamTypes, body, false);
     }
 
     /**
@@ -155,41 +163,41 @@ public final class LambdaDetector {
     /**
      * Парсит типы параметров из дескриптора метода.
      */
-    private List<String>parseParameterTypes(String descriptor){
-        List<String>types=new ArrayList<>();
+    private List<String> parseParameterTypes(String descriptor) {
+        List<String> types = new ArrayList<>();
 
-        int start=descriptor.indexOf('(');
-        int end=descriptor.indexOf(')');
+        int start = descriptor.indexOf('(');
+        int end = descriptor.indexOf(')');
 
-        if(start==-1||end==-1){
+        if (start == -1 || end == -1) {
             return types;
         }
 
-        String params=descriptor.substring(start+1,end);
+        String params = descriptor.substring(start + 1, end);
         int i = 0;
 
-        while(i<params.length()){
+        while (i < params.length()) {
             char c = params.charAt(i);
 
-            if(c=='L'){
+            if (c == 'L') {
                 // Object type
-                int semi = params.indexOf(';',1);
-                String type=params.substring(i+1,semi).replace('/','.');
+                int semi = params.indexOf(';', i);
+                String type = params.substring(i + 1, semi).replace('/', '.');
                 types.add(type);
-                i=semi+1;
-            }else if (c=='['){
+                i = semi + 1;
+            } else if (c == '[') {
                 // Array
                 int j = i;
-                while(j<params.length()&&params.charAt(j)=='[') {
+                while (j < params.length() && params.charAt(j) == '[') {
                     j++;
                 }
-                if(j<params.length()){
-                    String baseType=parseBaseType(params.charAt(j));
-                    String arrayType=baseType+"[]".repeat(j-i);
+                if (j < params.length()) {
+                    String baseType = parseBaseType(params.charAt(j));
+                    String arrayType = baseType + "[]".repeat(j - i);
                     types.add(arrayType);
-                    i=j+1;
+                    i = j + 1;
                 }
-            }else{
+            } else {
                 // Primitive type
                 types.add(parseBaseType(c));
                 i++;
@@ -205,28 +213,28 @@ public final class LambdaDetector {
     private String parseBaseType(char c) {
         return switch (c) {
             case 'Z' -> "boolean";
-            case 'B'->"byte";
+            case 'B' -> "byte";
             case 'C' -> "char";
-            case 'S'->"short";
-            case 'I'->"int";
-            case 'J'->"long";
-            case 'F'->"float";
-            case 'D'->"double";
-            case 'V'->"void";
-            default->"Object";
+            case 'S' -> "short";
+            case 'I' -> "int";
+            case 'J' -> "long";
+            case 'F' -> "float";
+            case 'D' -> "double";
+            case 'V' -> "void";
+            default -> "Object";
         };
     }
 
     /**
      * Генерирует имена параметров.
      */
-    private List<String> generateParamNames(int count){
-        List<String>names=new ArrayList<>(count);
-        for(int i = 0; i< count; i++){
-            if(count==1){
+    private List<String> generateParamNames(int count) {
+        List<String> names = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            if (count == 1) {
                 names.add("x");
-            }else{
-                names.add("x"+i);
+            } else {
+                names.add("x" + i);
             }
         }
         return names;

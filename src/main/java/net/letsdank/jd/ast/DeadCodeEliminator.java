@@ -285,10 +285,14 @@ public final class DeadCodeEliminator implements AstVisitor<Stmt, Void> {
             case UnaryExpr ue -> hasSideEffects(ue.expr());
             case FieldAccessExpr fa -> hasSideEffects(fa.target());
             case ArrayAccessExpr aa -> hasSideEffects(aa.array()) || hasSideEffects(aa.index());
+            case ArrayLengthExpr al -> hasSideEffects(al.array());
             case CastExpr ce -> hasSideEffects(ce.value());
+            case InstanceOfExpr io -> hasSideEffects(io.value());
             case TernaryExpr te -> hasSideEffects(te.condition()) ||
                     hasSideEffects(te.thenExpr()) ||
                     hasSideEffects(te.elseExpr());
+            case LambdaExpr le -> le.body() != null && hasSideEffects(le.body());
+            case MethodRefExpr mr -> mr.target() != null && hasSideEffects(mr.target());
             default -> false; // константы, переменные не имеют побочных эффектов
         };
     }
