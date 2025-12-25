@@ -536,8 +536,12 @@ public final class MethodDecompiler {
 
             BlockStmt defaultBlock = blockByOffset.get(defaultTarget);
 
+            // Улучшим switch для сгруппированных cases и fallthrough hints
+            SwitchEnhancer enhancer = new SwitchEnhancer();
+            SwitchStmt enhanced = enhancer.enhance(new SwitchStmt(selector, cases, defaultBlock));
+
             BlockStmt methodBody = new BlockStmt();
-            methodBody.add(new SwitchStmt(selector, cases, defaultBlock));
+            methodBody.add(enhanced);
             return new MethodAst(name, desc, methodBody);
         }
 

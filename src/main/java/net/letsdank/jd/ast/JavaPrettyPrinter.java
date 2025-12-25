@@ -33,14 +33,61 @@ public final class JavaPrettyPrinter {
         indent++;
 
         BlockStmt body = ast.body();
-        for (Stmt stmt : body.statements()) {
-            printStmt(stmt);
+        List<Stmt> stmts = body.statements();
+        for (int i = 0; i < stmts.size(); ) {
+            int consumed = tryPrintArrayInitialization(stmts, i);
+            if (consumed > 0) {
+                i += consumed;
+                continue;
+            }
+            printStmt(stmts.get(i));
+            i++;
         }
 
         indent--;
         appendLine("}");
 
         return sb.toString();
+    }
+
+    private int tryPrintArrayInitialization(List<Stmt> stmts, int start) {
+        if (start < 0 || start >= stmts.size()) return 0;
+        Stmt s = stmts.get(start);
+        if (!(s instanceof AssignStmt as)) return 0;
+        if (!(as.target() instanceof VarExpr var)) return 0;
+        if (!(as.value() instanceof NewArrayExpr na)) return 0;
+
+        String name = var.name();
+        String elemType = na.elementType();
+        List<Expr> values = new ArrayList<>();
+
+        int idx = start + 1;
+        int nextIndex = 0;
+        while (idx < stmts.size()) {
+            Stmt si = stmts.get(idx);
+            if (!(si instanceof AssignStmt ai)) break;
+            if (!(ai.target() instanceof ArrayAccessExpr aa)) break;
+            if (!(aa.array() instanceof VarExpr v2) || !v2.name().equals(name)) break;
+            if (!(aa.index() instanceof IntConstExpr ic) || ic.value() != nextIndex) break;
+            values.add(simplifier.simplify(ai.value()));
+            idx++;
+            nextIndex++;
+        }
+
+        if (values.isEmpty()) return 0;
+
+        // Вывод: name = new Type[]{v0, v1, ...};
+        appendLine(name + " = new " + elemType + "[{" + joinValues(values) + "}];");
+        return 1 + values.size();
+    }
+
+    private String joinValues(List<Expr> values) {
+        StringBuilder sbVals = new StringBuilder();
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) sbVals.append(", ");
+            sbVals.append(values.get(i).toString());
+        }
+        return sbVals.toString();
     }
 
     private String buildMethodHeader(ClassFile cf, MethodInfo method,
@@ -275,18 +322,18 @@ public final class JavaPrettyPrinter {
         }
     }
 
-    private void printBreak(BreakStmt bs){
-        if(bs.label()==null){
+    private void printBreak(BreakStmt bs) {
+        if (bs.label() == null) {
             appendLine("break;");
-        }else{
+        } else {
             appendLine("break " + bs.label() + ";");
         }
     }
 
-    private void printContinue(ContinueStmt cs){
-        if(cs.label()==null){
+    private void printContinue(ContinueStmt cs) {
+        if (cs.label() == null) {
             appendLine("continue;");
-        }else{
+        } else {
             appendLine("continue " + cs.label() + ";");
         }
     }
