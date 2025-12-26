@@ -2,6 +2,8 @@ package net.letsdank.jd.ast;
 
 import net.letsdank.jd.ast.expr.*;
 import net.letsdank.jd.ast.stmt.*;
+import net.letsdank.jd.lang.EnumDetector;
+import net.letsdank.jd.lang.RecordDetector;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
@@ -88,6 +90,50 @@ public final class JavaPrettyPrinter {
             sbVals.append(values.get(i).toString());
         }
         return sbVals.toString();
+    }
+
+    public String printClassHeader(ClassFile cf) {
+        StringBuilder headerSb = new StringBuilder();
+
+        // Определяем тип класса
+        if (EnumDetector.isEnum(cf)) {
+            headerSb.append("public enum ").append(cf.thisClassSimpleName()).append(" {");
+            List<String> constants = EnumDetector.extractEnumConstants(cf);
+            for (int i = 0; i < constants.size(); i++) {
+                if (i > 0) headerSb.append(", ");
+                headerSb.append(constants.get(i));
+            }
+            headerSb.append(";");
+            return headerSb.toString();
+        }
+
+        if (RecordDetector.isRecord(cf)) {
+            headerSb.append("public record ").append(cf.thisClassSimpleName()).append("{");
+            List<RecordDetector.RecordComponent> components = RecordDetector.extractRecordComponents(cf);
+            for (int i = 0; i < components.size(); i++) {
+                if (i > 0) headerSb.append(", ");
+                RecordDetector.RecordComponent rc = components.get(i);
+                headerSb.append(rc.typeName()).append(" ").append(rc.name());
+            }
+            headerSb.append(") {}");
+            return headerSb.toString();
+        }
+
+        // Regular class
+        int acc = cf.accessFlags();
+        if (Modifier.isPublic(acc)) headerSb.append("public ");
+        if (Modifier.isFinal(acc)) headerSb.append("final ");
+        if (Modifier.isAbstract(acc)) headerSb.append("abstract ");
+
+        headerSb.append("class ").append(cf.thisClassSimpleName());
+
+        String superClass = cf.superClassFqn();
+        if (superClass != null && !"java.lang.Object".equals(superClass)) {
+            headerSb.append(" extends ").append(superClass);
+        }
+
+        headerSb.append(" {");
+        return headerSb.toString();
     }
 
     private String buildMethodHeader(ClassFile cf, MethodInfo method,
