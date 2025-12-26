@@ -217,8 +217,8 @@ public final class GenericSignatureParser {
 
             if (c == '<') depth++;
             else if (c == '>') depth--;
-            else if (c == ':' && depth == 0) return idx + 1;
-            else if (c == ';' && depth == 0) return idx;
+            else if (c == ';' && depth == 0) return idx + 1;
+            else if (c == ':' && depth == 0) return idx;
 
             idx++;
         }
@@ -237,13 +237,13 @@ public final class GenericSignatureParser {
                 return idx + 1;
             }
 
-            int colorIdx = sig.indexOf(':', idx);
-            if (colorIdx == -1) break;
+            int colonIdx = sig.indexOf(':', idx);
+            if (colonIdx == -1) break;
 
-            String name = sig.substring(idx, colorIdx);
+            String name = sig.substring(idx, colonIdx);
             List<String> bounds = new ArrayList<>();
 
-            idx = colorIdx + 1;
+            idx = colonIdx + 1;
             while (idx < sig.length()) {
                 char c = sig.charAt(idx);
                 if (c == '>') {

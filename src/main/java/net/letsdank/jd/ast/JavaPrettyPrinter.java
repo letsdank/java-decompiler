@@ -3,12 +3,14 @@ package net.letsdank.jd.ast;
 import net.letsdank.jd.ast.expr.*;
 import net.letsdank.jd.ast.stmt.*;
 import net.letsdank.jd.lang.EnumDetector;
+import net.letsdank.jd.lang.GenericSignatureParser;
 import net.letsdank.jd.lang.RecordDetector;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
 import net.letsdank.jd.model.attribute.AttributeInfo;
 import net.letsdank.jd.model.attribute.ExceptionsAttribute;
+import net.letsdank.jd.model.attribute.SignatureAttribute;
 
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -169,8 +171,35 @@ public final class JavaPrettyPrinter {
         if (Modifier.isStatic(acc) && !isClinit) header.append("static ");
         if (Modifier.isFinal(acc)) header.append("final ");
 
+        // Парсим generic signature если доступен
+        GenericSignatureParser.MethodGenericSignature gsig = null;
+        for (AttributeInfo attr : method.attributes()) {
+            if (attr instanceof SignatureAttribute sa) {
+                try {
+                    gsig = GenericSignatureParser.parseMethodSignature(sa.signature());
+                } catch (Exception ignored) {
+                }
+                break;
+            }
+        }
+
+        // Type parameters (напр., <T extends Number>) выводим перед возвратом типа/имени
+        if (!isClinit && gsig != null && !gsig.typeVariables().isEmpty()) {
+            StringBuilder tp = new StringBuilder();
+            tp.append("<");
+            List<GenericSignatureParser.TypeVariable> tvs = gsig.typeVariables();
+            for (int i = 0; i < tvs.size(); i++) {
+                if (i > 0) tp.append(", ");
+                tp.append(tvs.get(i).toString());
+            }
+            tp.append("> ");
+            header.append(tp);
+        }
+
+        // Тип возврата: отдаем предпочтение парсингу сигнатуры если доступно
         if (!isConstructor && !isClinit) {
-            header.append(returnType).append(" ");
+            String rt = (gsig != null) ? gsig.returnType() : returnType;
+            header.append(rt).append(" ");
         }
 
         if (isClinit) {
@@ -181,7 +210,7 @@ public final class JavaPrettyPrinter {
 
         header.append(methodName).append("(");
 
-        List<String> paramTypes = JavaTypeUtils.methodParameterTypes(desc);
+        List<String> paramTypes = (gsig!=null)?gsig.parameterTypes() : JavaTypeUtils.methodParameterTypes(desc);
         List<String> paramNames = names.parameterNames();
         for (int i = 0; i < paramTypes.size(); i++) {
             if (i > 0) header.append(", ");
