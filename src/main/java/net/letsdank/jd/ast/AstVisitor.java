@@ -4,8 +4,38 @@ import net.letsdank.jd.ast.expr.*;
 import net.letsdank.jd.ast.stmt.*;
 
 /**
- * Базовый visitor для обхода AST выражений и операторов.
- * Реализует паттерн Visitor для упрощения трансформаций и анализа.
+ * Базовый visitor для обхода и трансформации абстрактного синтаксического дерева.
+ *
+ * Реализует паттерн Visitor для упрощения обхода и анализа AST.
+ * Поддерживает как выражения ({@link Expr}) так и операторы ({@link Stmt}).
+ *
+ * <h2>Использование</h2>
+ * <p>
+ * Реализуйте этот интерфейс для создания собственных трансформаций или анализа AST:
+ * </p>
+ * <pre>
+ * class MyAnalyzer implements AstVisitor&lt;String, Void&gt; {
+ *    {@literal @}Override
+ *     public String visitVar(VarExpr expr, Void param) {
+ *         return "переменная: " + expr.name();
+ *     }
+ *
+ *    {@literal @}Override
+ *     public String visitCall(CallExpr expr, Void param) {
+ *         return "вызов: " + expr.methodName();
+ *     }
+ *     // ... остальные методы
+ * }
+ * </pre>
+ *
+ * <h2>Обобщенные парамеры</h2>
+ * <ul>
+ *     <li>{@code <R>} - тип результата (например, String, Integer, Boolean)</li>
+ *     <li>{@code <P>} - тип параметра контекста (например, Map с переменными, Void)</li>
+ * </ul>
+ *
+ * @param <R> тип результата визитора
+ * @param <P> тип параметра контекста, передаваемый при обходе
  */
 public interface AstVisitor<R, P> {
 

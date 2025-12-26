@@ -6,10 +6,41 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Простые упрощения выражений: константная свертка и алгебраические тождества.
+ * Упрощает выражения путем применения алгебраических тождеств и константной свертки.
+ *
+ * <h2>Применяемые оптимизации</h2>
+ * <ul>
+ *     <li><b>Константная свертка:</b> 2 + 3 -> 5, "a" + "b" -> "ab"</li>
+ *     <li><b>Алгебраические тождества:</b>
+ *       <ul>
+ *           <li>x + 0 -> x, 0 + x -> x</li>
+ *           <li>x * 1 -> x, 1 * x -> x</li>
+ *           <li>x * 0 -> 0, 0 * x -> 0</li>
+ *           <li>x / 1 -> x</li>
+ *           <li>x ^ 0 -> x, x | 0 -> x</li>
+ *           <li>x & 0 -> 0</li>
+ *       </ul>
+ *     </li>
+ *     <li><b>Двойное отрицание:</b> -(-x) -> x</li>
+ * </ul>
+ *
+ * <h2>Использование</h2>
+ * <pre>
+ * ExpressionSimplifier simplifier = new ExpressionSimplifier();
+ * Expr expr = new BinaryExpr("+", new IntConstExpr(2), new IntConstExpr(3));
+ * Expr simplified = simplifier.simplify(expr); // IntConstExpr(5)
+ * </pre>
+ *
+ * @see Expr
  */
 public final class ExpressionSimplifier {
 
+    /**
+     * Упрощает выражение, применяя алгебраические тождества и константную свертку.
+     *
+     * @param expr выражение для упрощения (может быть null)
+     * @return упрощенное выражение, или исходное если упрощение невозможно
+     */
     public Expr simplify(Expr expr) {
         if (expr == null) return null;
 
