@@ -97,9 +97,30 @@ public final class JavaPrettyPrinter {
     public String printClassHeader(ClassFile cf) {
         StringBuilder headerSb = new StringBuilder();
 
+        // Парсим signature класса если имеется для generics
+        List<GenericSignatureParser.TypeVariable> typeVars = new ArrayList<>();
+        for (AttributeInfo attr : cf.attributes()) {
+            if (attr instanceof SignatureAttribute sa) {
+                try {
+                    typeVars = GenericSignatureParser.parseClassSignature(sa.signature());
+                } catch (Exception ignored) {
+                }
+                break;
+            }
+        }
+
         // Определяем тип класса
         if (EnumDetector.isEnum(cf)) {
-            headerSb.append("public enum ").append(cf.thisClassSimpleName()).append(" {");
+            headerSb.append("public enum ").append(cf.thisClassSimpleName());
+            if (!typeVars.isEmpty()) {
+                headerSb.append("<");
+                for (int i = 0; i < typeVars.size(); i++) {
+                    if (i > 0) headerSb.append(", ");
+                    headerSb.append(typeVars.get(i).toString());
+                }
+                headerSb.append(">");
+            }
+            headerSb.append(" {");
             List<String> constants = EnumDetector.extractEnumConstants(cf);
             for (int i = 0; i < constants.size(); i++) {
                 if (i > 0) headerSb.append(", ");
@@ -110,7 +131,16 @@ public final class JavaPrettyPrinter {
         }
 
         if (RecordDetector.isRecord(cf)) {
-            headerSb.append("public record ").append(cf.thisClassSimpleName()).append("{");
+            headerSb.append("public record ").append(cf.thisClassSimpleName());
+            if (!typeVars.isEmpty()) {
+                headerSb.append("<");
+                for (int i = 0; i < typeVars.size(); i++) {
+                    if (i > 0) headerSb.append(", ");
+                    headerSb.append(typeVars.get(i).toString());
+                }
+                headerSb.append(">");
+            }
+            headerSb.append("{");
             List<RecordDetector.RecordComponent> components = RecordDetector.extractRecordComponents(cf);
             for (int i = 0; i < components.size(); i++) {
                 if (i > 0) headerSb.append(", ");
@@ -128,6 +158,16 @@ public final class JavaPrettyPrinter {
         if (Modifier.isAbstract(acc)) headerSb.append("abstract ");
 
         headerSb.append("class ").append(cf.thisClassSimpleName());
+
+        // Type parameters;
+        if (!typeVars.isEmpty()) {
+            headerSb.append("<");
+            for (int i = 0; i < typeVars.size(); i++) {
+                if (i > 0) headerSb.append(", ");
+                headerSb.append(typeVars.get(i).toString());
+            }
+            headerSb.append(">");
+        }
 
         String superClass = cf.superClassFqn();
         if (superClass != null && !"java.lang.Object".equals(superClass)) {
@@ -210,7 +250,7 @@ public final class JavaPrettyPrinter {
 
         header.append(methodName).append("(");
 
-        List<String> paramTypes = (gsig!=null)?gsig.parameterTypes() : JavaTypeUtils.methodParameterTypes(desc);
+        List<String> paramTypes = (gsig != null) ? gsig.parameterTypes() : JavaTypeUtils.methodParameterTypes(desc);
         List<String> paramNames = names.parameterNames();
         for (int i = 0; i < paramTypes.size(); i++) {
             if (i > 0) header.append(", ");
