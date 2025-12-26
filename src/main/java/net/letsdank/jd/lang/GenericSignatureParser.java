@@ -73,7 +73,7 @@ public final class GenericSignatureParser {
      */
     public static MethodGenericSignature parseMethodSignature(String signature) {
         if (signature == null) {
-            return new MethodGenericSignature(new ArrayList<>(), "void");
+            return new MethodGenericSignature(new ArrayList<>(), List.of(), "void");
         }
 
         // Type parameters
@@ -84,16 +84,27 @@ public final class GenericSignatureParser {
         }
 
         // Parameters in (...)
+        int parenOpen = signature.indexOf('(', idx);
         int parenClose = signature.indexOf(')', idx);
-        if (parenClose == -1) {
-            return new MethodGenericSignature(typeVars, "?");
+        if (parenOpen == -1 || parenClose == -1 || parenClose < parenOpen) {
+            return new MethodGenericSignature(typeVars, List.of(), "?");
+        }
+
+        String paramsPart = signature.substring(parenOpen + 1, parenClose);
+        List<String> paramTypes = new ArrayList<>();
+        int pIdx = 0;
+        while (pIdx < paramsPart.length()) {
+            int typeEnd = findTypeEnd(paramsPart, pIdx);
+            String pDesc = paramsPart.substring(pIdx, typeEnd);
+            paramTypes.add(formatType(pDesc));
+            pIdx = typeEnd;
         }
 
         // Return type после )
         String returnTypeStr = signature.substring(parenClose + 1);
         String returnType = formatType(returnTypeStr);
 
-        return new MethodGenericSignature(typeVars, returnType);
+        return new MethodGenericSignature(typeVars, paramTypes, returnType);
     }
 
     /**
@@ -120,7 +131,7 @@ public final class GenericSignatureParser {
             case 'V' -> "void";
             case 'L' -> parseObjectType(descriptor);
             case '[' -> formatType(descriptor.substring(1)) + "[]";
-            case 'T' -> descriptor; // Type variable
+            case 'T' -> formatTypeVariable(descriptor);
             case '*' -> "?"; // wildcard
             case '+' -> parseWildcardBound(descriptor, "extends");
             case '-' -> parseWildcardBound(descriptor, "super");
@@ -144,12 +155,19 @@ public final class GenericSignatureParser {
         String baseName = desc.substring(1, typeEnd).replace('/', '.');
 
         if (genericStart != -1) {
-            int genericEnd = desc.indexOf('>', genericStart);
-            if (genericEnd != -1) {
-                String gerircPart = desc.substring(genericStart + 1, genericEnd);
-                String formattedGenerics = formatGenericParameters(gerircPart);
-                return baseName + "<" + formattedGenerics + ">";
+            int depth = 1;
+            int idx = genericStart + 1;
+            while (idx < desc.length() && depth > 0) {
+                char c = desc.charAt(idx);
+                if (c == '<') depth++;
+                else if (c == '>') depth--;
+                idx++;
             }
+
+            int genericEnd = depth == 0 ? idx - 1 : desc.length();
+            String genericPart = desc.substring(genericStart + 1, genericEnd);
+            String formattedGenerics = formatGenericParameters(genericPart);
+            return baseName + "<" + formattedGenerics + ">";
         }
 
         return baseName;
@@ -181,6 +199,16 @@ public final class GenericSignatureParser {
      * Находит конец type descriptor, учитывая вложенные generics.
      */
     private static int findTypeEnd(String str, int start) {
+        if (start >= str.length()) return start;
+
+        char startChar = str.charAt(start);
+        if ("ZBCSIFDJV".indexOf(startChar) >= 0) {
+            return start + 1; // primitive or void descriptor
+        }
+        if (startChar == '[') {
+            return findTypeEnd(str, start + 1); // array element type
+        }
+
         int idx = start;
         int depth = 0;
 
@@ -218,19 +246,22 @@ public final class GenericSignatureParser {
             idx = colorIdx + 1;
             while (idx < sig.length()) {
                 char c = sig.charAt(idx);
-                if (c == ':' || c == '>') {
-                    if (c == '>') {
-                        out.add(new TypeVariable(name, bounds));
-                        return idx + 1;
-                    }
-                    // Еще одна bound
+                if (c == '>') {
+                    out.add(new TypeVariable(name, bounds));
+                    return idx + 1;
+                }
+                if (c == ':') { // пустой class bound, двигаемся к interface bound
                     idx++;
-                    int typeEnd = findTypeEnd(sig, idx);
-                    String bound = sig.substring(idx, typeEnd);
-                    bounds.add(formatType(bound));
-                    idx = typeEnd;
-                } else {
-                    break;
+                    continue;
+                }
+
+                int typeEnd = findTypeEnd(sig, idx);
+                String bound = sig.substring(idx, typeEnd);
+                bounds.add(formatType(bound));
+                idx = typeEnd;
+
+                if (idx < sig.length() && sig.charAt(idx) == ':') {
+                    idx++; // еще одна bound
                 }
             }
 
@@ -244,6 +275,21 @@ public final class GenericSignatureParser {
         int end = findTypeEnd(desc, 1);
         String bound = desc.substring(1, end);
         return "? " + keyword + " " + formatType(bound);
+    }
+
+    /**
+     * Преобразует дескриптор type variable вида TName; в строку Name
+     */
+    private static String formatTypeVariable(String descriptor) {
+        if (descriptor == null) {
+            return null;
+        }
+        int start = descriptor.indexOf('T');
+        int end = descriptor.indexOf(';', start + 1);
+        if (start < 0 || end < 0 || end <= start + 1) {
+            return descriptor;
+        }
+        return descriptor.substring(start + 1, end);
     }
 
     /**
@@ -262,6 +308,7 @@ public final class GenericSignatureParser {
     /**
      * Method generic signature.
      */
-    public record MethodGenericSignature(List<TypeVariable> typeVariables, String returnType) {
+    public record MethodGenericSignature(List<TypeVariable> typeVariables, List<String> parameterTypes,
+                                         String returnType) {
     }
 }
