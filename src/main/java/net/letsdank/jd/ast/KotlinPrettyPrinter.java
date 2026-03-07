@@ -3,9 +3,12 @@ package net.letsdank.jd.ast;
 import net.letsdank.jd.ast.expr.*;
 import net.letsdank.jd.ast.stmt.*;
 import net.letsdank.jd.kotlin.KotlinPropertyRegistry;
+import net.letsdank.jd.lang.GenericSignatureParser;
 import net.letsdank.jd.model.ClassFile;
 import net.letsdank.jd.model.ConstantPool;
 import net.letsdank.jd.model.MethodInfo;
+import net.letsdank.jd.model.attribute.AttributeInfo;
+import net.letsdank.jd.model.attribute.SignatureAttribute;
 
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -87,10 +90,45 @@ public final class KotlinPrettyPrinter {
             header.append("// static ").append(' ');
         }
 
+        // Парсим generic signature если доступен
+        GenericSignatureParser.MethodGenericSignature gsig = null;
+        for (AttributeInfo attr : method.attributes()) {
+            if (attr instanceof SignatureAttribute sa) {
+                try {
+                    gsig = GenericSignatureParser.parseMethodSignature(sa.signature());
+                } catch (Exception ignored) {
+                }
+                break;
+            }
+        }
+
+        // Type parameters (напр., <T : Number>) выводим перед названием функции
+        if (!isClinit && gsig != null && !gsig.typeVariables().isEmpty()) {
+            StringBuilder tp = new StringBuilder();
+            tp.append("<");
+            List<GenericSignatureParser.TypeVariable> tvs = gsig.typeVariables();
+            for (int i = 0; i < tvs.size(); i++) {
+                if (i > 0) tp.append(", ");
+                // В Kotlin, границы разделены " : " вместо " extends "
+                GenericSignatureParser.TypeVariable tv = tvs.get(i);
+                if (tv.bounds().isEmpty()) {
+                    tp.append(tv.name());
+                } else {
+                    tp.append(tv.name()).append(" : ");
+                    for (int j = 0; j < tv.bounds().size(); j++) {
+                        if (j > 0) tp.append(" & ");
+                        tp.append(tv.bounds().get(j));
+                    }
+                }
+            }
+            tp.append("> ");
+            header.append(tp);
+        }
+
         // fun name(params): ReturnType
         header.append("fun ").append(methodName).append("(");
 
-        List<String> paramTypes = KotlinTypeUtils.methodParameterTypes(desc);
+        List<String> paramTypes = (gsig != null) ? gsig.parameterTypes() : KotlinTypeUtils.methodParameterTypes(desc);
         List<String> paramNames = names.parameterNames();
         for (int i = 0; i < paramTypes.size(); i++) {
             if (i > 0) header.append(", ");
@@ -103,7 +141,8 @@ public final class KotlinPrettyPrinter {
         header.append(")");
 
         // В Kotlin тип после параметров: ": Type"
-        header.append(": ").append(returnType);
+        String rt = (gsig != null) ? gsig.returnType() : returnType;
+        header.append(": ").append(rt);
 
         return header.toString();
     }
